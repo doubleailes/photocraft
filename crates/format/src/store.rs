@@ -136,10 +136,23 @@ pub(crate) fn read_manifest(src: &dyn Source, opts: &LoadOptions) -> Result<Mani
     let mut v = <serde_json::Value as serde::Deserialize>::deserialize(&mut de)?;
     de.end()?;
     crate::migrate::migrate(&mut v)?;
+    check_document_mode(&v)?;
     let layers = take_array(&mut v, "/document/layers");
     let mut m: Manifest = serde_json::from_value(v)?;
     m.document.layers = layers_from_json(layers)?;
     Ok(m)
+}
+
+/// Documents are RGB or grayscale (`docs/ocio-migration.md`). A document an earlier build saved
+/// in a removed colour model holds pixels this build can't read: say so plainly, and how to get
+/// it back (the earlier build exports PSD, which opens here converted to RGB or gray).
+fn check_document_mode(v: &serde_json::Value) -> Result<()> {
+    match v.pointer("/document/mode").and_then(serde_json::Value::as_str) {
+        Some(mode @ ("Cmyk" | "Lab" | "Indexed" | "Bitmap" | "Duotone" | "Multichannel")) => Err(FormatError::Unsupported(format!(
+            "this document was saved in {mode} mode by an earlier PhotoCraft; documents are now RGB or grayscale. Open it in that version and save it as PSD: the PSD opens here converted"
+        ))),
+        _ => Ok(()),
+    }
 }
 
 /// Decodes layers one at a time, group children first. Decoding the whole tree in one go costs

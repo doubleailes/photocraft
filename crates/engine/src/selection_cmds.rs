@@ -135,7 +135,10 @@ fn color_range(s: &mut Session, p: &Value) -> Result<Value> {
             if let Some(cs) = p.get("colors") {
                 let cs = cs.as_array().ok_or_else(|| bad("`colors` must be a list of colours".into()))?;
                 for c in cs {
-                    samples.push(sel::RangeSample { color: parse_color(&json!({ "color": c })), at: None });
+                    // Picked colours, matched against the composite in the document's values.
+                    let [r, g, b] = parse_color(&json!({ "color": c }));
+                    let [r, g, b, _] = s.to_doc_color([r, g, b, 1.0]);
+                    samples.push(sel::RangeSample { color: [r, g, b], at: None });
                 }
             }
             if p.get("color").is_some() || samples.is_empty() {
@@ -436,6 +439,10 @@ mod tests {
         s.execute("select.colorRange", json!({"colors": ["#ff0000", "#0000ff"], "fuzziness": 10})).unwrap();
         assert_eq!((coverage(&s, 10, 10), coverage(&s, 30, 10), coverage(&s, 10, 24)), (1.0, 1.0, 1.0));
         assert_eq!(coverage(&s, 2, 2), 0.0);
+        // Listed colours are picked colours: #bcbcbc is the 0.5 grey strip of the linear document.
+        s.execute("select.colorRange", json!({"colors": ["#bcbcbc"], "fuzziness": 10})).unwrap();
+        assert!(coverage(&s, 32, 24) > 0.9, "grey strip: {}", coverage(&s, 32, 24));
+        assert_eq!((coverage(&s, 22, 24), coverage(&s, 2, 2)), (0.0, 0.0));
         // Eyedropper point on the blue square; `invert` flips the result.
         s.execute("select.colorRange", json!({"points": [[7, 22]], "fuzziness": 10, "invert": true})).unwrap();
         assert_eq!((coverage(&s, 10, 24), coverage(&s, 10, 10), coverage(&s, 2, 2)), (0.0, 1.0, 1.0));

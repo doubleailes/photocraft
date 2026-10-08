@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use photocraft_cms::{Builtin, ColorSpace, Intent, Profile, Transform};
-use photocraft_color::{ColorMode, SampleType, read_sample};
+use photocraft_color::{ColorMode, SampleType, read_sample, write_sample};
 use photocraft_psd::ColorMode as PsdMode;
 
 /// How samples of a file's colour model become RGB.
@@ -39,6 +39,32 @@ impl Native {
             Ok(t) => Native::Cmyk(Arc::new(t)),
             // The built-in profiles always build a transform; Lab formulas are the last resort.
             Err(_) => Native::Lab,
+        }
+    }
+
+    /// The model's white: what Photoshop mattes a merged image's transparent pixels against
+    /// (no ink; Lab L 100, a = b = 0), in the stored 0..=1 values.
+    fn white(&self) -> &'static [f32] {
+        match self {
+            Native::Cmyk(_) => &[0.0; 4],
+            Native::Lab => &[1.0, 0.5, 0.5],
+        }
+    }
+
+    /// Undoes Photoshop's white matting of a merged image in the file's own model, before the
+    /// samples become RGB (the conversion is not linear, so unmatting after it tints edges).
+    /// `bytes` are native-endian interleaved colour channels plus alpha.
+    pub(crate) fn unmatte(&self, bytes: &mut [u8], sample: SampleType) {
+        let white = self.white();
+        let stride = white.len() + 1;
+        let n = bytes.len() / sample.bytes() / stride;
+        for p in 0..n {
+            let a = read_sample(bytes, sample, p * stride + white.len());
+            for (c, w) in white.iter().enumerate() {
+                let i = p * stride + c;
+                let v = if a <= 0.0 { *w } else { crate::pixels::unmatte(read_sample(bytes, sample, i), a, *w) };
+                write_sample(bytes, sample, i, v);
+            }
         }
     }
 
@@ -132,6 +158,23 @@ mod tests {
         let rgb = Native::Lab.to_rgb(&bytes, SampleType::U8, false);
         assert!((rgb[0] - rgb[1]).abs() < 0.01 && (rgb[0] - 0.466).abs() < 0.02, "{rgb:?}");
         assert!(rgb[3] > 0.95 && rgb[4] < 0.1 && rgb[5] < 0.1, "{rgb:?}");
+    }
+
+    #[test]
+    fn merged_images_unmatte_in_their_own_model() {
+        // Half-transparent pixels matted against white: 50% cyan ink is stored as 25% ink, and
+        // Lab L 50 as L 75 with a/b still neutral. Unmatting gives the straight values back.
+        let q = |v: f32| (v * 255.0).round() as u8;
+        let mut cmyk = vec![q(0.25), 0, 0, 0, q(0.5)];
+        Native::cmyk(None).unmatte(&mut cmyk, SampleType::U8);
+        assert!((f32::from(cmyk[0]) / 255.0 - 0.5).abs() < 0.01 && cmyk[1..4] == [0, 0, 0] && cmyk[4] == q(0.5), "{cmyk:?}");
+        let mut lab = vec![q(0.75), q(0.5), q(0.5), q(0.5)];
+        Native::Lab.unmatte(&mut lab, SampleType::U8);
+        assert!((f32::from(lab[0]) / 255.0 - 0.5).abs() < 0.01 && lab[1] == q(0.5) && lab[2] == q(0.5), "{lab:?}");
+        // Fully transparent pixels take the model's white.
+        let mut clear = vec![q(0.3), q(0.3), q(0.3), q(0.3), 0];
+        Native::cmyk(None).unmatte(&mut clear, SampleType::U8);
+        assert_eq!(clear, [0, 0, 0, 0, 0]);
     }
 
     #[test]

@@ -329,3 +329,38 @@ fn sample_cached() -> &'static [u8] {
     static S: std::sync::OnceLock<Vec<u8>> = std::sync::OnceLock::new();
     S.get_or_init(sample)
 }
+
+#[test]
+fn documents_saved_in_a_removed_mode_say_how_to_open_them() {
+    for mode in ["Cmyk", "Lab", "Indexed", "Bitmap", "Duotone", "Multichannel"] {
+        let b = rebuild(&sample(), |n, d| {
+            Some(if n == "manifest.json" {
+                let mut v: serde_json::Value = serde_json::from_slice(&d).unwrap();
+                v["document"]["mode"] = mode.into();
+                serde_json::to_vec(&v).unwrap()
+            } else {
+                d
+            })
+        });
+        let e = load_from_bytes(&b).unwrap_err();
+        assert!(matches!(&e, FormatError::Unsupported(m) if m.contains(&format!("{mode} mode")) && m.contains("PSD")), "{mode}: {e}");
+    }
+}
+
+#[test]
+fn colours_saved_in_a_removed_mode_read_as_rgb_or_gray() {
+    let read = |j: serde_json::Value| serde_json::from_value::<photocraft_color::Color>(j).unwrap();
+    // No ink is paper white; Lab L 100 a/b neutral is white; Bitmap and Duotone are gray.
+    let c = read(serde_json::json!({"mode": "Cmyk", "c": [0.0, 0.0, 0.0, 0.0], "alpha": 0.5}));
+    assert_eq!((c.mode, c.alpha), (ColorMode::Rgb, 0.5));
+    assert!(c.c[..3].iter().all(|v| *v > 0.98), "{c:?}");
+    let c = read(serde_json::json!({"mode": "Lab", "c": [1.0, 128.0 / 255.0, 128.0 / 255.0, 0.0], "alpha": 1.0}));
+    assert!(c.mode == ColorMode::Rgb && c.c[..3].iter().all(|v| (*v - 1.0).abs() < 0.01), "{c:?}");
+    let c = read(serde_json::json!({"mode": "Duotone", "c": [0.25, 0.0, 0.0, 0.0], "alpha": 1.0}));
+    assert_eq!((c.mode, c.c[0]), (ColorMode::Grayscale, 0.25));
+    let c = read(serde_json::json!({"mode": "Indexed", "c": [0.1, 0.2, 0.3, 0.0], "alpha": 1.0}));
+    assert_eq!((c.mode, c.c), (ColorMode::Rgb, [0.1, 0.2, 0.3, 0.0]));
+    // Current colours round-trip unchanged.
+    let c = photocraft_color::Color::rgba(0.2, 0.4, 0.6, 0.8);
+    assert_eq!(read(serde_json::to_value(c).unwrap()), c);
+}

@@ -254,3 +254,18 @@ fn a_wide_gamut_file_keeps_its_colours() {
     // P3 red is outside sRGB: linear sRGB holds it with a red above 1 or negative green/blue.
     assert!(p[0] > 1.0 || p[1] < 0.0 || p[2] < 0.0, "{p:?}");
 }
+
+#[test]
+fn a_files_own_patterns_become_linear_with_it() {
+    let mut d = Document::with_background("p", Size::new(4, 4), ColorMode::Rgb, SampleType::U8, Color::WHITE);
+    let mut s = Surface::new(PixelFormat::RGBA8);
+    s.fill_rect(Rect::new(0, 0, 2, 2), &[0.5, 0.5, 0.5, 1.0]);
+    d.patterns.push(photocraft_doc::Pattern::new("grey", s, 2, 2));
+    assert!(linearize(&mut d).unwrap());
+    let p = &d.patterns[0].surface;
+    assert_eq!(p.format().sample, SampleType::F16);
+    assert!(near(p.pixel(1, 1)[0], srgb_decode(128.0 / 255.0), 2e-3), "{:?}", p.pixel(1, 1));
+    // Linearising again leaves it alone.
+    assert!(!linearize(&mut d).unwrap());
+    assert!(near(d.patterns[0].surface.pixel(1, 1)[0], srgb_decode(128.0 / 255.0), 2e-3));
+}

@@ -82,6 +82,9 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
     // text and smart objects keep their converted pixels, which may be Photoshop's own.
     let snapshot = work.clone();
     refresh_shapes(&snapshot, &mut work.layers);
+    // The document's own patterns (pattern fills and overlays read them) are encoded like the
+    // file's pixels: linear too.
+    work.patterns = work.patterns.iter().map(|p| pattern_for(p, &snapshot)).collect();
     *doc = work;
     Ok(true)
 }
