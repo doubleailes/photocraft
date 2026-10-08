@@ -682,6 +682,7 @@ pub fn stored_size(d: &Descriptor) -> Option<(f64, f64)> {
 /// (`filterMaskExtendWithWhite`), as a grayscale mask of `sample` depth. `Ok(None)` when the
 /// item has no mask or it is all white (no mask); `Err` when it can't be decoded.
 pub fn mask_from_item(item: &FilterEffectsItem, sample: SampleType, stack: &FilterStack) -> Result<Option<LayerMask>, String> {
+    let sample = crate::pixels::psd_sample(sample);
     if item.mask.is_none() {
         return Ok(None);
     }
@@ -708,6 +709,8 @@ pub fn mask_from_item(item: &FilterEffectsItem, sample: SampleType, stack: &Filt
 /// when `mask` is `None`). Photoshop needs the planes: re-rendering the filters of an item
 /// without them crashes it. `None` when there are no unfiltered pixels.
 pub fn feid_item(placed: &str, unfiltered: &Surface, mask: Option<&LayerMask>, bounds: GeomRect, doc_fmt: PixelFormat) -> Option<FilterEffectsItem> {
+    // PSD planes have no half float (F16 widens to F32).
+    let doc_fmt = doc_fmt.with_sample(crate::pixels::psd_sample(doc_fmt.sample));
     let sample = doc_fmt.sample;
     let px = if unfiltered.format() == doc_fmt { unfiltered.clone() } else { unfiltered.convert(doc_fmt) };
     let content = px.content_bounds();

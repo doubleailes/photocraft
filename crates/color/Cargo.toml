@@ -8,5 +8,6 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+half = "2"
 photocraft-cms = { workspace = true }
 serde = { workspace = true }

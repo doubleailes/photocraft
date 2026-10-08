@@ -191,7 +191,7 @@ pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             ui.add_space(label_w + 8.0);
             let mut d = depth;
             let opts: Vec<(SampleType, &str, &str)> =
-                DEPTHS.iter().map(|(d, l, _)| (*d, *l, if *d == SampleType::F32 { "Floating point" } else { "Integer" })).collect();
+                DEPTHS.iter().map(|(d, l, _)| (*d, *l, if d.is_float() { "Floating point" } else { "Integer" })).collect();
             if widgets::dropdown_with_tooltips(ui, "doc-props-depth", &mut d, &opts, 150.0)
                 && let Some((_, _, id)) = DEPTHS.iter().find(|(x, _, _)| *x == d)
             {

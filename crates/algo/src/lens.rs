@@ -383,7 +383,7 @@ pub fn remap(src: &Surface, frame: Rect, out_area: Rect, edge: EdgeMode, map: &(
                 } else {
                     straight * g
                 };
-                if sfmt.sample != photocraft_color::SampleType::F32 {
+                if !sfmt.sample.is_float() {
                     *v = v.clamp(0.0, 1.0);
                 }
             }

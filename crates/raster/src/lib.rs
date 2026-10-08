@@ -259,7 +259,7 @@ impl Surface {
 
     /// Reads `r` as straight RGBA floats (converting from the surface's
     /// model) into `out` (`w*h` entries), without per-pixel allocation.
-    /// Fast paths for RGB(A) and gray(A) at 8/16/32 bits read tile bytes
+    /// Fast paths for RGBA8, RGBA16F and GRAYA8 read tile bytes
     /// directly; missing tiles are filled with the default pixel.
     pub fn read_rgba_into(&self, r: Rect, out: &mut [[f32; 4]]) {
         let w = r.width() as usize;
@@ -283,6 +283,13 @@ impl Surface {
                         let src = &t.data[base..base + dst.len() * 4];
                         for (d, s) in dst.iter_mut().zip(src.as_chunks::<4>().0) {
                             *d = [s[0] as f32 / 255.0, s[1] as f32 / 255.0, s[2] as f32 / 255.0, s[3] as f32 / 255.0];
+                        }
+                    }
+                    (ColorMode::Rgb, SampleType::F16, true) => {
+                        let src = &t.data[base * 2..(base + dst.len() * 4) * 2];
+                        for (d, s) in dst.iter_mut().zip(src.as_chunks::<8>().0) {
+                            let h = |i: usize| half::f16::from_ne_bytes([s[i], s[i + 1]]).to_f32();
+                            *d = [h(0), h(2), h(4), h(6)];
                         }
                     }
                     (ColorMode::Grayscale, SampleType::U8, true) => {
@@ -634,7 +641,7 @@ impl Rgba8Image {
 
 /// Is this sample type able to hold values above 1.0 (HDR)?
 pub fn is_hdr(sample: SampleType) -> bool {
-    matches!(sample, SampleType::F32)
+    sample.is_float()
 }
 
 #[cfg(test)]
@@ -654,7 +661,9 @@ mod tests {
 
     #[test]
     fn zero_alloc_accessors_match_read_region() {
-        for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::CMYKA8, PixelFormat::GRAY8] {
+        for fmt in
+            [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::CMYKA8, PixelFormat::GRAY8]
+        {
             let mut s = Surface::with_default(fmt, &vec![0.25; fmt.channels()]);
             let r = Rect::new(-300, -20, 300, 40);
             for (i, (x, y)) in [(-299, -19), (0, 0), (255, 39), (256, 10), (299, 0)].into_iter().enumerate() {

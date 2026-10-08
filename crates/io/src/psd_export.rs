@@ -254,7 +254,9 @@ impl Ex {
     }
 
     fn pixel_channels(&mut self, s: &Surface, name: &str) -> (PsdRect, Vec<ChannelData>) {
-        let s = if s.format() != self.fmt {
+        let s = if s.format() == self.fmt.with_sample(SampleType::F16) && self.fmt.sample == SampleType::F32 {
+            s.convert(self.fmt) // lossless F16 -> F32 widening: no warning
+        } else if s.format() != self.fmt {
             self.warnings.push(format!("layer \"{name}\": pixels converted from {:?} to {:?}", s.format(), self.fmt));
             s.convert(self.fmt)
         } else {
@@ -925,7 +927,7 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
         has_alpha |= band.px.iter().any(|p| match sample {
             SampleType::U8 => q255(p[3]) < 255,
             SampleType::U16 => (p[3].clamp(0.0, 1.0) * 65535.0 + 0.5) as u16 != u16::MAX,
-            SampleType::F32 => p[3] != 1.0,
+            SampleType::F16 | SampleType::F32 => p[3] != 1.0,
         });
         translucent |= band.px.iter().any(|p| p[3] < 1.0);
         let start = (band.rect.y0 - canvas.y0) as usize * w;
@@ -1009,7 +1011,7 @@ pub(crate) fn estimate_psd_size(doc: &Document) -> Option<u64> {
     } else {
         let format = doc.pixel_format();
         let color_channels = u64::try_from(format.mode.color_channels()).ok()?;
-        let bytes_per_sample = u64::try_from(format.sample.bytes()).ok()?;
+        let bytes_per_sample = u64::try_from(crate::pixels::psd_sample(format.sample).bytes()).ok()?;
         let layer_channels = color_channels.checked_add(1)?;
 
         for (_, _, layer) in doc.walk() {
@@ -1089,7 +1091,9 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
     if doc.mode == ColorMode::Multichannel {
         return crate::multichannel_map::document_to_psd(doc, opts.force_psb);
     }
-    let fmt = doc.pixel_format();
+    // PSD has no half float: F16 documents are exported as 32-bit float (lossless widening).
+    let doc_fmt = doc.pixel_format();
+    let fmt = doc_fmt.with_sample(crate::pixels::psd_sample(doc_fmt.sample));
     let sample = fmt.sample;
     let cc = fmt.mode.color_channels();
     let big = doc.size.width > 30_000 || doc.size.height > 30_000;

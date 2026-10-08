@@ -125,6 +125,26 @@ fn layered_32bit_export_reimports_render_equal() {
     }
 }
 
+/// PSD has no half float: half-float documents are written as 32-bit float PSDs (lossless
+/// widening, no "pixels converted" warnings) and re-import as 32-bit documents rendering the same.
+#[test]
+fn half_float_documents_export_as_32bit_psd() {
+    for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
+        for (label, features) in [("pixels", Features::PIXELS), ("all", Features::ALL)] {
+            let doc = common::gen_doc(mode, SampleType::F16, features);
+            let out = export(&doc, "t.psd", &ExportOptions::default()).unwrap();
+            assert!(!out.warnings.iter().any(|w| w.contains("converted")), "{mode:?} {label}: {:?}", out.warnings);
+            assert_32bit_layout(&format!("f16 {mode:?} {label}"), &out.bytes);
+            let back = import("t.psd", &out.bytes).unwrap().document;
+            assert_eq!(back.depth, SampleType::F32);
+            let (a, b) = (photocraft_compose::flatten(&doc).px, photocraft_compose::flatten(&back).px);
+            assert_eq!(a.len(), b.len());
+            let d = common::max_diff(&a, &b);
+            assert!(d <= 1e-4, "{mode:?} {label}: render differs by {d}");
+        }
+    }
+}
+
 /// Every 32-bit Photoshop oracle: its Color Mode Data is the record we write, and our export
 /// of it has the 32-bit layout, re-imports and renders the same.
 #[cfg(feature = "corpus")]

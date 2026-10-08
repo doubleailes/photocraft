@@ -277,7 +277,7 @@ fn open_pixels(
     if selection.is_none() {
         app.ui.camera_raw_scope.selected_region = false;
     }
-    let float = surf.format().sample == photocraft_color::SampleType::F32;
+    let float = surf.format().sample.is_float();
     let mut d = CameraRawDialog {
         layer,
         layer_name: name,

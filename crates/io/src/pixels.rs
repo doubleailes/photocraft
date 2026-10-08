@@ -3,13 +3,19 @@
 
 use photocraft_color::SampleType;
 
-/// PSD depth (bits) for a sample type.
+/// PSD depth (bits) for a sample type. PSD has no half float: F16 documents are written as
+/// 32-bit float, and exporters widen them with [`psd_sample`] before encoding planes.
 pub fn psd_depth(s: SampleType) -> u16 {
-    match s {
+    match psd_sample(s) {
         SampleType::U8 => 8,
         SampleType::U16 => 16,
-        SampleType::F32 => 32,
+        SampleType::F16 | SampleType::F32 => 32,
     }
+}
+
+/// The sample type a PSD stores for a document sample type (F16 widens losslessly to F32).
+pub fn psd_sample(s: SampleType) -> SampleType {
+    if s == SampleType::F16 { SampleType::F32 } else { s }
 }
 
 /// Sample type for a PSD depth (1-bit is expanded to 8).
@@ -27,6 +33,10 @@ fn invert_sample(bytes: &mut [u8], s: SampleType) {
         SampleType::U16 => {
             let v = u16::from_ne_bytes([bytes[0], bytes[1]]);
             bytes.copy_from_slice(&(65535 - v).to_ne_bytes());
+        }
+        SampleType::F16 => {
+            let v = half::f16::from_ne_bytes([bytes[0], bytes[1]]).to_f32();
+            bytes.copy_from_slice(&half::f16::from_f32(1.0 - v).to_ne_bytes());
         }
         SampleType::F32 => {
             let v = f32::from_ne_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
@@ -100,6 +110,7 @@ pub fn max_sample(s: SampleType) -> Vec<u8> {
     match s {
         SampleType::U8 => vec![255],
         SampleType::U16 => 65535u16.to_ne_bytes().to_vec(),
+        SampleType::F16 => half::f16::ONE.to_ne_bytes().to_vec(),
         SampleType::F32 => 1.0f32.to_ne_bytes().to_vec(),
     }
 }
@@ -135,6 +146,7 @@ pub fn encode_be(v: f32, s: SampleType, out: &mut Vec<u8>) {
     match s {
         SampleType::U8 => out.push((v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8),
         SampleType::U16 => out.extend_from_slice(&((v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16).to_be_bytes()),
+        SampleType::F16 => out.extend_from_slice(&half::f16::from_f32(v).to_be_bytes()),
         SampleType::F32 => out.extend_from_slice(&v.to_be_bytes()),
     }
 }
@@ -145,6 +157,7 @@ pub fn decode_be(bytes: &[u8], index: usize, s: SampleType) -> f32 {
     match s {
         SampleType::U8 => f32::from(bytes[index]) / 255.0,
         SampleType::U16 => f32::from(u16::from_be_bytes([bytes[index * 2], bytes[index * 2 + 1]])) / 65535.0,
+        SampleType::F16 => half::f16::from_be_bytes([bytes[index * 2], bytes[index * 2 + 1]]).to_f32(),
         SampleType::F32 => {
             let o = index * 4;
             f32::from_be_bytes([bytes[o], bytes[o + 1], bytes[o + 2], bytes[o + 3]])

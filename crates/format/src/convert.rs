@@ -78,7 +78,7 @@ pub(crate) fn swap_to_le(bytes: &mut [u8], sample: SampleType) {
     if cfg!(target_endian = "big") {
         match sample {
             SampleType::U8 => {}
-            SampleType::U16 => bytes.as_chunks_mut::<2>().0.iter_mut().for_each(|c| c.reverse()),
+            SampleType::U16 | SampleType::F16 => bytes.as_chunks_mut::<2>().0.iter_mut().for_each(|c| c.reverse()),
             SampleType::F32 => bytes.as_chunks_mut::<4>().0.iter_mut().for_each(|c| c.reverse()),
         }
     }

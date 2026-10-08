@@ -114,6 +114,8 @@ enum TexKind {
     Rgba8Direct,
     /// Other 8-bit formats converted to RGBA8.
     Rgba8,
+    /// RGBA16F (half-float) tiles copied verbatim (little-endian targets).
+    Rgba16FDirect,
     /// 16/32-bit formats converted to RGBA16F.
     Rgba16F,
     /// GRAY8 masks copied verbatim.
@@ -126,6 +128,7 @@ impl TexKind {
     fn for_surface(role: Role, f: PixelFormat) -> Self {
         match role {
             Role::Content | Role::Stroke if f == PixelFormat::RGBA8 => TexKind::Rgba8Direct,
+            Role::Content | Role::Stroke if f == PixelFormat::RGBA16F && cfg!(target_endian = "little") => TexKind::Rgba16FDirect,
             Role::Content | Role::Stroke if f.sample == SampleType::U8 => TexKind::Rgba8,
             Role::Content | Role::Stroke => TexKind::Rgba16F,
             Role::Mask if f == PixelFormat::GRAY8 => TexKind::R8Direct,
@@ -135,7 +138,7 @@ impl TexKind {
     fn format(self) -> wgpu::TextureFormat {
         match self {
             TexKind::Rgba8Direct | TexKind::Rgba8 => wgpu::TextureFormat::Rgba8Unorm,
-            TexKind::Rgba16F => wgpu::TextureFormat::Rgba16Float,
+            TexKind::Rgba16FDirect | TexKind::Rgba16F => wgpu::TextureFormat::Rgba16Float,
             TexKind::R8Direct => wgpu::TextureFormat::R8Unorm,
             TexKind::R32F => wgpu::TextureFormat::R32Float,
         }
@@ -143,7 +146,7 @@ impl TexKind {
     fn bytes_per_pixel(self) -> usize {
         match self {
             TexKind::Rgba8Direct | TexKind::Rgba8 => 4,
-            TexKind::Rgba16F => 8,
+            TexKind::Rgba16FDirect | TexKind::Rgba16F => 8,
             TexKind::R8Direct => 1,
             TexKind::R32F => 4,
         }
@@ -1705,7 +1708,7 @@ fn write_tile(queue: &wgpu::Queue, r: &Resident, c: TileCoord, bytes: &[u8]) {
 
 /// Tile pixels in the texture's format. `tile = None` gives the default pixel everywhere.
 fn convert_tile(surface: &Surface, tile: Option<&Arc<Tile>>, kind: TexKind, c: TileCoord) -> Vec<u8> {
-    if let (Some(t), TexKind::Rgba8Direct | TexKind::R8Direct) = (tile, kind) {
+    if let (Some(t), TexKind::Rgba8Direct | TexKind::Rgba16FDirect | TexKind::R8Direct) = (tile, kind) {
         return t.bytes().to_vec();
     }
     let n = (TILE_SIZE * TILE_SIZE) as usize;
@@ -1722,7 +1725,7 @@ fn convert_tile(surface: &Surface, tile: Option<&Arc<Tile>>, kind: TexKind, c: T
                 let v = photocraft_raster::to_rgba(&fmt, px);
                 out.extend(v.map(|x| (x.clamp(0.0, 1.0) * 255.0 + 0.5) as u8));
             }
-            TexKind::Rgba16F => {
+            TexKind::Rgba16FDirect | TexKind::Rgba16F => {
                 let v = photocraft_raster::to_rgba(&fmt, px);
                 for x in v {
                     out.extend(f32_to_f16(x).to_le_bytes());

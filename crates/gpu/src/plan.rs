@@ -1498,7 +1498,7 @@ pub fn adjustment_program(adj: &Adjustment, transfer: Transfer, depth: photocraf
         }
         Adjustment::PhotoFilter { color, density, preserve_luminosity } => {
             // compose::adjust: the linear-light matrix, then SetLum on the encoded values (8/16-bit).
-            let linear_doc = depth == photocraft_color::SampleType::F32;
+            let linear_doc = depth.is_float();
             let m = adjust::photo_filter_matrix(*color, *density, *preserve_luminosity && linear_doc);
             for (row, m) in p.iter_mut().zip(m) {
                 *row = [m[0], m[1], m[2], 0.0];

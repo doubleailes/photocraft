@@ -12,7 +12,7 @@
 use photocraft_algo::inpaint::{self, CompleteParams};
 use photocraft_algo::poisson;
 use photocraft_algo::retouch::{ToneRange, dodge_burn, local_blur, local_sharpen, sponge};
-use photocraft_color::{BlendMode, PixelFormat, SampleType};
+use photocraft_color::{BlendMode, PixelFormat};
 use photocraft_doc::{Document, LayerContent, LayerId};
 use photocraft_geom::Rect;
 use photocraft_paint::retouch::{Footprint, Region, Smudge, alpha_index, apply_coverage, apply_dab_stroke, stroke_coverage};
@@ -228,7 +228,7 @@ fn blend_param(p: &Value, cmd: &str) -> Result<BlendMode> {
 fn clamp_samples(fmt: &PixelFormat, data: &mut [f32]) {
     let n = fmt.channels();
     let a = alpha_index(fmt);
-    let float = fmt.sample == SampleType::F32;
+    let float = fmt.sample.is_float();
     for px in data.chunks_exact_mut(n) {
         for (c, v) in px.iter_mut().enumerate() {
             *v = if Some(c) == a || !float { v.clamp(0.0, 1.0) } else { v.max(0.0) };

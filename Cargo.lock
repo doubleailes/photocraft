@@ -3531,6 +3531,7 @@ dependencies = [
 name = "photocraft-color"
 version = "0.4.0"
 dependencies = [
+ "half",
  "photocraft-cms",
  "serde",
 ]
@@ -3645,6 +3646,7 @@ name = "photocraft-io"
 version = "0.4.0"
 dependencies = [
  "blake3",
+ "half",
  "photocraft-algo",
  "photocraft-cms",
  "photocraft-codecs",
@@ -3712,6 +3714,7 @@ dependencies = [
 name = "photocraft-raster"
 version = "0.4.0"
 dependencies = [
+ "half",
  "photocraft-color",
  "photocraft-geom",
  "proptest",

@@ -16,6 +16,7 @@ corpus = []
 heif = ["photocraft-codecs/heif"]
 
 [dependencies]
+half = "2"
 photocraft-geom = { workspace = true }
 photocraft-color = { workspace = true }
 photocraft-cms = { workspace = true }

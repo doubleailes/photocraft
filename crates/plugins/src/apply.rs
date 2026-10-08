@@ -9,14 +9,15 @@ use crate::manifest::Area;
 use crate::runtime::{Deadline, Plugin};
 use crate::{Error, Result};
 
-/// The `format` argument of `pc_filter`: bits 0–7 the source bit depth (8, 16 or 32), bit 8 set
+/// The `format` argument of `pc_filter`: bits 0–7 the source bit depth (8, 16 or 32; half float
+/// reports 16), bit 8 set
 /// when the last channel is (straight) alpha, bits 16–23 the colour mode as numbered in the PSD
 /// file format (1 Grayscale, 2 Indexed, 3 RGB, 4 CMYK, 7 Multichannel, 8 Duotone, 9 Lab;
 /// 0 Bitmap).
 pub fn format_code(f: PixelFormat) -> u32 {
     let depth = match f.sample {
         SampleType::U8 => 8,
-        SampleType::U16 => 16,
+        SampleType::U16 | SampleType::F16 => 16,
         SampleType::F32 => 32,
     };
     let mode = match f.mode {
@@ -180,7 +181,7 @@ impl Plugin {
         let mut out = vec![0.0f32; bw * bh * n];
         let sel_row = c.selection.map(|s| s.format().channels());
         let mut sel = Vec::new();
-        let int_depth = c.fmt.sample != SampleType::F32;
+        let int_depth = !c.fmt.sample.is_float();
         for row in 0..bh {
             if let (Some(s), Some(sn)) = (c.selection, sel_row) {
                 let r = Rect::new(band.x0, band.y0 + row as i32, band.x1, band.y0 + row as i32 + 1);

@@ -11,7 +11,7 @@ use photocraft_algo::exif;
 use photocraft_algo::lens::{self, EdgeMode, LensCorrection};
 use photocraft_algo::transform::Interp;
 use photocraft_algo::wideangle::{self, WideAngle};
-use photocraft_color::{ColorMode, SampleType};
+use photocraft_color::ColorMode;
 use photocraft_doc::{Document, LayerContent, LayerId, SmartFilter};
 use photocraft_geom::Rect;
 use photocraft_raster::{Surface, from_rgba_into};
@@ -167,7 +167,7 @@ pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw) -> Surface 
     let fmt = surf.format();
     let (w, h) = (area.width() as usize, area.height() as usize);
     let mut px = rgba_region(surf, area);
-    camera_raw::develop(&mut px, w, h, p, fmt.sample == SampleType::F32);
+    camera_raw::develop(&mut px, w, h, p, fmt.sample.is_float());
     let n = fmt.channels();
     let orig = surf.read_region(area);
     let mut data = vec![0.0f32; w * h * n];

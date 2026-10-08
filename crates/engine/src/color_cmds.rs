@@ -253,7 +253,7 @@ impl ColorState {
                 let base = json!({"embedded": emb.description, "working": working.description, "mismatch": mismatch, "policy": policy.id()});
                 // 32-bit linear images (EXR/HDR are tagged linear sRGB on import) stay linear, as
                 // Photoshop keeps 32-bit documents in a linear version of the working space.
-                let linear_hdr = doc.depth == SampleType::F32 && emb.same_colors(Builtin::LinearSrgb.profile());
+                let linear_hdr = doc.depth.is_float() && emb.same_colors(Builtin::LinearSrgb.profile());
                 if !mismatch || linear_hdr {
                     return merge(base, json!({"action": "kept"}));
                 }
@@ -531,6 +531,11 @@ pub fn convert_surface(s: &Surface, from: ColorMode, to: PixelFormat, t: &Transf
     if sf.mode != from || t.inputs() != sf.mode.color_channels() || t.outputs() != to.mode.color_channels() || sf.alpha != to.alpha {
         return s.convert(to);
     }
+    if sf.sample == SampleType::F16 {
+        // The ICC engine has no half-float kernel: widen, convert, narrow (exact for half values).
+        let wide = convert_surface(&s.convert(sf.with_sample(SampleType::F32)), from, to.with_sample(SampleType::F32), t);
+        return wide.convert(PixelFormat { sample: SampleType::F16, ..wide.format() });
+    }
     let (ss, ds) = (sf.channels(), to.channels());
     let to = PixelFormat { sample: sf.sample, ..to };
     // Default (untouched) pixel.
@@ -547,7 +552,7 @@ pub fn convert_surface(s: &Surface, from: ColorMode, to: PixelFormat, t: &Transf
     let kind = match sf.sample {
         SampleType::U8 => SampleKind::U8,
         SampleType::U16 => SampleKind::U16,
-        SampleType::F32 => SampleKind::F32,
+        SampleType::F16 | SampleType::F32 => SampleKind::F32,
     };
     t.convert_bytes_many(kind, jobs, ss, ds, true);
     for ((c, _), bytes) in tiles.iter().zip(staging.chunks(dst_len.max(1))) {
