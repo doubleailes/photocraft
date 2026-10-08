@@ -511,24 +511,47 @@ impl Surface {
     }
 
     /// Convert to another pixel format (depth and/or model; colour models via [`convert_pixel`]).
+    /// Tiles convert in parallel, and a same-model conversion (a depth change, alpha added or
+    /// dropped) allocates nothing per pixel.
     pub fn convert(&self, to: PixelFormat) -> Surface {
         let mut out = Surface::with_default(to, &convert_pixel(&self.format, &to, &self.default_pixel()));
-        let from_n = self.channels();
+        let tiles: Vec<(TileCoord, &Tile)> = self.tiles.iter().map(|(c, t)| (*c, t.as_ref())).collect();
+        let converted: Vec<(TileCoord, Tile)> = map_tiles(&tiles, |t| self.convert_tile(t, &to));
+        for (c, tile) in converted {
+            out.tiles.insert(c, Arc::new(tile));
+        }
+        out
+    }
+
+    /// One tile of [`Surface::convert`].
+    fn convert_tile(&self, t: &Tile, to: &PixelFormat) -> Tile {
+        let from = &self.format;
+        let px_count = (TILE_SIZE * TILE_SIZE) as usize;
+        let (from_n, to_n) = (from.channels(), to.channels());
+        let mut data = vec![0u8; px_count * to.bytes_per_pixel()];
         let mut src = vec![0.0f32; from_n];
-        for (c, t) in &self.tiles {
-            let dst = out.tile_mut(*c);
-            let px_count = (TILE_SIZE * TILE_SIZE) as usize;
-            for i in 0..px_count {
-                for (k, v) in src.iter_mut().enumerate() {
-                    *v = read_sample(&t.data, self.format.sample, i * from_n + k);
+        let same_model = from.mode == to.mode;
+        let colour_n = from.mode.color_channels();
+        for i in 0..px_count {
+            for (k, v) in src.iter_mut().enumerate() {
+                *v = read_sample(&t.data, from.sample, i * from_n + k);
+            }
+            if same_model {
+                // What `convert_pixel` returns for a same-model pixel, without its allocation.
+                for k in 0..colour_n {
+                    write_sample(&mut data, to.sample, i * to_n + k, src[k]);
                 }
-                let px = convert_pixel(&self.format, &to, &src);
-                for (k, v) in px.iter().enumerate() {
-                    write_sample(&mut dst.data, to.sample, i * to.channels() + k, *v);
+                if to.alpha {
+                    let a = if from.alpha { src[colour_n] } else { 1.0 };
+                    write_sample(&mut data, to.sample, i * to_n + colour_n, a);
+                }
+            } else {
+                for (k, v) in convert_pixel(from, to, &src).iter().enumerate() {
+                    write_sample(&mut data, to.sample, i * to_n + k, *v);
                 }
             }
         }
-        out
+        Tile { data: data.into_boxed_slice() }
     }
 
     /// Composite-friendly RGBA read (converts from the surface's model).
@@ -539,6 +562,17 @@ impl Surface {
 }
 
 /// Encode normalised floats into one pixel's bytes.
+/// `f` over every tile, in parallel off wasm (tiles are independent).
+fn map_tiles(tiles: &[(TileCoord, &Tile)], f: impl Fn(&Tile) -> Tile + Sync) -> Vec<(TileCoord, Tile)> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        use rayon::prelude::*;
+        tiles.par_iter().map(|(c, t)| (*c, f(t))).collect()
+    }
+    #[cfg(target_arch = "wasm32")]
+    tiles.iter().map(|(c, t)| (*c, f(t))).collect()
+}
+
 pub fn encode_pixel(format: &PixelFormat, px: &[f32], out: &mut [u8]) {
     for (i, v) in px.iter().enumerate().take(format.channels()) {
         write_sample(out, format.sample, i, *v);
@@ -633,6 +667,55 @@ mod tests {
     use super::*;
     use photocraft_color::PixelFormat;
     use proptest::prelude::*;
+
+    /// The per-pixel reference [`Surface::convert`] must match: every tile, every pixel, through
+    /// `convert_pixel`.
+    fn convert_reference(s: &Surface, to: PixelFormat) -> Surface {
+        let mut out = Surface::with_default(to, &convert_pixel(&s.format, &to, &s.default_pixel()));
+        let n = s.channels();
+        for (c, t) in &s.tiles {
+            let dst = out.tile_mut(*c);
+            for i in 0..(TILE_SIZE * TILE_SIZE) as usize {
+                let src: Vec<f32> = (0..n).map(|k| read_sample(&t.data, s.format.sample, i * n + k)).collect();
+                for (k, v) in convert_pixel(&s.format, &to, &src).iter().enumerate() {
+                    write_sample(&mut dst.data, to.sample, i * to.channels() + k, *v);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn convert_matches_the_per_pixel_reference() {
+        // Pixels in several tiles, so the parallel path is exercised; values chosen so every
+        // depth has an exact representation or a rounding the reference shares.
+        let sources = [
+            (PixelFormat::RGBA8, vec![0.0, 0.25, 0.5, 1.0]),
+            (PixelFormat::RGBA16, vec![0.1, 0.2, 0.3, 0.75]),
+            (PixelFormat::RGBA16F, vec![0.5, 0.125, 2.0, 0.5]),
+            (PixelFormat::RGBA32F, vec![-0.5, 1.5, 0.333, 0.9]),
+            (PixelFormat::GRAY8, vec![0.5, 0.0, 0.0, 0.0]),
+            (PixelFormat::GRAYA8, vec![0.5, 0.25, 0.0, 0.0]),
+        ];
+        let targets = [
+            PixelFormat::RGBA8,
+            PixelFormat::RGBA16F,
+            PixelFormat::RGBA32F,
+            PixelFormat::GRAY8,
+            PixelFormat::GRAYA8,
+            PixelFormat::new(ColorMode::Rgb, SampleType::F32, false),
+            PixelFormat::new(ColorMode::Grayscale, SampleType::F16, true),
+        ];
+        for (from, px) in &sources {
+            let mut s = Surface::with_default(*from, &convert_pixel(from, from, &[0.0; 4][..from.channels()]));
+            for (x, y) in [(0, 0), (300, 10), (5, 700), (513, 513)] {
+                s.write_pixel(x, y, &px[..from.channels()]);
+            }
+            for to in targets {
+                assert_eq!(s.convert(to), convert_reference(&s, to), "{from:?} -> {to:?}");
+            }
+        }
+    }
 
     #[test]
     fn from_rgba_into_matches_from_rgba() {
