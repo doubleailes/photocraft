@@ -21,6 +21,7 @@ fn decode(plane: &[u8], i: usize, s: SampleType) -> f32 {
     match s {
         SampleType::U8 => f32::from(plane[i]) / 255.0,
         SampleType::U16 => f32::from(u16::from_be_bytes([plane[2 * i], plane[2 * i + 1]])) / 65535.0,
+        SampleType::F16 => half::f16::from_be_bytes([plane[2 * i], plane[2 * i + 1]]).to_f32(),
         SampleType::F32 => f32::from_be_bytes([plane[4 * i], plane[4 * i + 1], plane[4 * i + 2], plane[4 * i + 3]]),
     }
 }

@@ -112,7 +112,7 @@ conversion:
 
 `format` = `depth | alpha << 8 | mode << 16`
 
-- `depth` (bits 0–7): the document's bit depth, 8, 16 or 32 (informational: samples are always `f32`).
+- `depth` (bits 0–7): the document's bit depth, 8, 16 (16-bit integer or half float) or 32 (informational: samples are always `f32`).
 - `alpha` (bit 8): 1 when the last channel is (straight, not premultiplied) alpha.
 - `mode` (bits 16–23): the colour mode, numbered as in the PSD file format: 0 Bitmap, 1 Grayscale,
   2 Indexed (stored as RGB), 3 RGB, 4 CMYK, 7 Multichannel, 8 Duotone (stored as gray), 9 Lab.

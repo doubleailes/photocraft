@@ -141,6 +141,7 @@ pub(crate) fn csample(s: SampleType) -> CSample {
     match s {
         SampleType::U8 => CSample::U8,
         SampleType::U16 => CSample::U16,
+        SampleType::F16 => CSample::F16,
         SampleType::F32 => CSample::F32,
     }
 }

@@ -534,7 +534,7 @@ pub fn adjustment_quantum(depth: photocraft_color::SampleType) -> Option<f32> {
     match depth {
         photocraft_color::SampleType::U8 => Some(255.0),
         photocraft_color::SampleType::U16 => Some(32768.0),
-        photocraft_color::SampleType::F32 => None,
+        photocraft_color::SampleType::F16 | photocraft_color::SampleType::F32 => None,
     }
 }
 

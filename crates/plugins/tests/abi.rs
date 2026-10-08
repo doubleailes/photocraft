@@ -89,7 +89,9 @@ fn example_invert_inverts_colour_at_every_depth() {
                 continue;
             }
             for c in 0..3 {
-                assert!((b[c] - (1.0 - a[c])).abs() < 1e-6, "{sample:?} ({x},{y}) c{c}: {a:?} -> {b:?}");
+                // Half floats keep ~11 bits of mantissa: 1 - v rounds to the nearest half.
+                let tol = if sample == SampleType::F16 { 1e-3 } else { 1e-6 };
+                assert!((b[c] - (1.0 - a[c])).abs() < tol, "{sample:?} ({x},{y}) c{c}: {a:?} -> {b:?}");
             }
             assert_eq!(a[3], b[3], "alpha is kept");
         }

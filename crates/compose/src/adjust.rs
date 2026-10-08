@@ -28,7 +28,7 @@ impl Transfer {
     /// Photoshop's Exposure works on them as stored (photoshop corpus rgb32 and gray32
     /// exposure.psd: within 0.5/255, against 69/255 through the 2.2 curve).
     pub fn for_document(mode: photocraft_color::ColorMode, depth: photocraft_color::SampleType) -> Self {
-        if depth == photocraft_color::SampleType::F32 {
+        if depth.is_float() {
             return Transfer::Gamma(1.0);
         }
         match mode {
@@ -155,7 +155,7 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
             if *monochrome { [mix(&matrix[0]); 3] } else { [mix(&matrix[0]), mix(&matrix[1]), mix(&matrix[2])] }
         }),
         Adjustment::PhotoFilter { color, density, preserve_luminosity } => {
-            let linear_doc = depth == Some(SampleType::F32);
+            let linear_doc = depth.is_some_and(SampleType::is_float);
             let m = photo_filter_matrix(*color, *density, *preserve_luminosity && linear_doc);
             let set_lum = *preserve_luminosity && !linear_doc;
             map_rgb(buf, |c| {
@@ -254,7 +254,7 @@ pub fn tone_luts_q(adj: &Adjustment, quantum: Option<f32>) -> [Vec<f32>; 4] {
 /// [`levels_float`], sampled on 0..1 and kept in 0..1 like every adjustment result here.
 pub fn tone_luts_depth(adj: &Adjustment, depth: Option<SampleType>) -> [Vec<f32>; 4] {
     match (adj, depth) {
-        (Adjustment::Levels { master, per_channel, space: ToneSpace::Rgb, .. }, Some(SampleType::F32)) => {
+        (Adjustment::Levels { master, per_channel, space: ToneSpace::Rgb, .. }, Some(SampleType::F16 | SampleType::F32)) => {
             let x = |k: usize| k as f32 / (LUT_SIZE - 1) as f32;
             let row = |c: &LevelsChannel| (0..LUT_SIZE).map(|k| levels_float(c, levels_float(master, x(k))).clamp(0.0, 1.0)).collect();
             [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), (0..LUT_SIZE).map(x).collect()]

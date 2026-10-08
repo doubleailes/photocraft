@@ -269,6 +269,7 @@ pub fn import_flat(name: &str, bytes: &[u8]) -> Result<Document, String> {
     let sample = match depth {
         SampleType::U8 => CS::U8,
         SampleType::U16 => CS::U16,
+        SampleType::F16 => CS::F16,
         SampleType::F32 => CS::F32,
     };
     let conv = img.convert(target, sample);
@@ -294,7 +295,7 @@ pub fn export_flat(doc: &Document, path: &str) -> Result<Vec<u8>, String> {
     let img = match doc.depth {
         SampleType::U8 => Image::from_u8(w, h, ChannelLayout::Rgba, buf.to_rgba8().pixels),
         SampleType::U16 => Image::from_u16(w, h, ChannelLayout::Rgba, &data.iter().map(|v| (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16).collect::<Vec<_>>()),
-        SampleType::F32 => Image::from_f32(w, h, ChannelLayout::Rgba, &data),
+        SampleType::F16 | SampleType::F32 => Image::from_f32(w, h, ChannelLayout::Rgba, &data),
     }
     .map_err(|e| e.to_string())?;
     let img = match &doc.icc_profile {

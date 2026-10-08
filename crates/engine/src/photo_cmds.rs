@@ -241,7 +241,7 @@ pub(crate) fn seam_blend(warped: &[Surface], canvas: Rect, order: &[usize], seam
                     let f = photo.factor(i, c, r2);
                     let v = &mut roi.px[k * ch + c];
                     *v = if fmt.mode == ColorMode::Cmyk { 1.0 - (1.0 - *v) * f } else { *v * f };
-                    if fmt.sample != SampleType::F32 {
+                    if !fmt.sample.is_float() {
                         *v = v.clamp(0.0, 1.0);
                     }
                 }
@@ -327,7 +327,7 @@ pub(crate) fn seam_blend(warped: &[Surface], canvas: Rect, order: &[usize], seam
         for i in 0..cw * chh {
             for c in 0..cc {
                 let v = blend[i * cc + c];
-                data[i * nch + c] = if fmt.sample == SampleType::F32 { v } else { v.clamp(0.0, 1.0) };
+                data[i * nch + c] = if fmt.sample.is_float() { v } else { v.clamp(0.0, 1.0) };
             }
             data[i * nch + nch - 1] = cov[i];
         }
@@ -368,7 +368,7 @@ pub(crate) fn seam_blend(warped: &[Surface], canvas: Rect, order: &[usize], seam
 }
 
 fn data_clamp(v: f32, fmt: PixelFormat) -> f32 {
-    if fmt.sample == SampleType::F32 { v } else { v.clamp(0.0, 1.0) }
+    if fmt.sample.is_float() { v } else { v.clamp(0.0, 1.0) }
 }
 
 /// Seam order: the reference first, then by distance of each image's centre from it.
@@ -703,7 +703,7 @@ fn merge_to_hdr(s: &mut Session, p: &Value) -> Result<Value> {
         q[3] = 1.0;
     }
     let mut doc = Document::new(format!("Untitled_HDR{}", s.documents().len() + 1), Size::new(w as u32, h as u32), ColorMode::Rgb, depth);
-    doc.icc_profile = if depth == SampleType::F32 { Some(photocraft_cms::builtin::Builtin::LinearSrgb.profile().to_bytes()) } else { icc };
+    doc.icc_profile = if depth.is_float() { Some(photocraft_cms::builtin::Builtin::LinearSrgb.profile().to_bytes()) } else { icc };
     let fmt = doc.pixel_format();
     let n = fmt.channels();
     let mut data = vec![0.0f32; w * h * n];

@@ -28,18 +28,25 @@ use serde::{Deserialize, Serialize};
 pub enum SampleType {
     U8,
     U16,
+    /// IEEE 754 half float (binary16), stored native-endian. Like F32, values are unbounded
+    /// (scene-linear, may exceed 1.0 or go negative).
+    F16,
     F32,
 }
 
 impl SampleType {
-    pub const ALL: [SampleType; 3] = [SampleType::U8, SampleType::U16, SampleType::F32];
+    pub const ALL: [SampleType; 4] = [SampleType::U8, SampleType::U16, SampleType::F16, SampleType::F32];
 
     pub const fn bytes(self) -> usize {
         match self {
             SampleType::U8 => 1,
-            SampleType::U16 => 2,
+            SampleType::U16 | SampleType::F16 => 2,
             SampleType::F32 => 4,
         }
+    }
+    /// Floating-point storage: values are not clamped to [0, 1] (HDR, scene-linear).
+    pub const fn is_float(self) -> bool {
+        matches!(self, SampleType::F16 | SampleType::F32)
     }
     pub const fn bits(self) -> u32 {
         self.bytes() as u32 * 8
@@ -84,6 +91,7 @@ pub struct PixelFormat {
 impl PixelFormat {
     pub const RGBA8: PixelFormat = PixelFormat { mode: ColorMode::Rgb, sample: SampleType::U8, alpha: true };
     pub const RGBA16: PixelFormat = PixelFormat { mode: ColorMode::Rgb, sample: SampleType::U16, alpha: true };
+    pub const RGBA16F: PixelFormat = PixelFormat { mode: ColorMode::Rgb, sample: SampleType::F16, alpha: true };
     pub const RGBA32F: PixelFormat = PixelFormat { mode: ColorMode::Rgb, sample: SampleType::F32, alpha: true };
     pub const GRAY8: PixelFormat = PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::U8, alpha: false };
     pub const GRAYA8: PixelFormat = PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::U8, alpha: true };
@@ -103,8 +111,11 @@ impl PixelFormat {
     }
 }
 
+/// Largest finite half-float value; F16 writes saturate to ±this.
+pub const HALF_MAX: f32 = 65504.0;
+
 /// Read one sample at `index` (sample index, not byte index) as normalised f32.
-/// U8/U16 map to [0, 1]; F32 is returned as stored.
+/// U8/U16 map to [0, 1]; F16/F32 are returned as stored.
 #[inline]
 pub fn read_sample(bytes: &[u8], sample: SampleType, index: usize) -> f32 {
     match sample {
@@ -112,6 +123,10 @@ pub fn read_sample(bytes: &[u8], sample: SampleType, index: usize) -> f32 {
         SampleType::U16 => {
             let o = index * 2;
             u16::from_ne_bytes([bytes[o], bytes[o + 1]]) as f32 / 65535.0
+        }
+        SampleType::F16 => {
+            let o = index * 2;
+            half::f16::from_ne_bytes([bytes[o], bytes[o + 1]]).to_f32()
         }
         SampleType::F32 => {
             let o = index * 4;
@@ -129,6 +144,12 @@ pub fn write_sample(bytes: &mut [u8], sample: SampleType, index: usize, v: f32) 
             let o = index * 2;
             let q = (v.clamp(0.0, 1.0) * 65535.0 + 0.5) as u16;
             bytes[o..o + 2].copy_from_slice(&q.to_ne_bytes());
+        }
+        SampleType::F16 => {
+            let o = index * 2;
+            // Saturate to the finite half range (NaN -> 0) so no Inf/NaN enters a document.
+            let v = if v.is_nan() { 0.0 } else { v.clamp(-HALF_MAX, HALF_MAX) };
+            bytes[o..o + 2].copy_from_slice(&half::f16::from_f32(v).to_ne_bytes());
         }
         SampleType::F32 => {
             let o = index * 4;
@@ -200,7 +221,7 @@ mod tests {
                 let tol = match s {
                     SampleType::U8 => 1.0 / 255.0,
                     SampleType::U16 => 1.0 / 65535.0,
-                    SampleType::F32 => 0.0,
+                    SampleType::F16 | SampleType::F32 => 0.0,
                 };
                 assert!((r - v).abs() <= tol, "{s:?} {v} -> {r}");
             }
@@ -220,6 +241,33 @@ mod tests {
         let mut b = [0u8; 4];
         write_sample(&mut b, SampleType::F32, 0, 4.5);
         assert_eq!(read_sample(&b, SampleType::F32, 0), 4.5);
+        write_sample(&mut b, SampleType::F16, 0, 4.5);
+        assert_eq!(read_sample(&b, SampleType::F16, 0), 4.5);
+        write_sample(&mut b, SampleType::F16, 1, -0.75);
+        assert_eq!(read_sample(&b, SampleType::F16, 1), -0.75);
+    }
+
+    #[test]
+    fn half_samples_stay_finite() {
+        let mut b = [0u8; 6];
+        write_sample(&mut b, SampleType::F16, 0, 1.0e9);
+        write_sample(&mut b, SampleType::F16, 1, f32::NEG_INFINITY);
+        write_sample(&mut b, SampleType::F16, 2, f32::NAN);
+        assert_eq!(read_sample(&b, SampleType::F16, 0), HALF_MAX);
+        assert_eq!(read_sample(&b, SampleType::F16, 1), -HALF_MAX);
+        assert_eq!(read_sample(&b, SampleType::F16, 2), 0.0);
+    }
+
+    #[test]
+    fn half_precision_is_about_three_decimal_digits() {
+        let mut b = [0u8; 2];
+        for v in [0.001f32, 0.18, 0.7, 3.3, 100.0] {
+            write_sample(&mut b, SampleType::F16, 0, v);
+            let r = read_sample(&b, SampleType::F16, 0);
+            assert!((r - v).abs() <= v * 1.0e-3, "{v} -> {r}");
+        }
+        assert_eq!(PixelFormat::RGBA16F.bytes_per_pixel(), 8);
+        assert!(SampleType::F16.is_float() && SampleType::F32.is_float() && !SampleType::U16.is_float());
     }
 
     #[test]

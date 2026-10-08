@@ -29,7 +29,7 @@ macro_rules! zip_cases {
 }
 
 zip_cases! {
-    rgb_u8: Rgb, U8; rgb_u16: Rgb, U16; rgb_f32: Rgb, F32;
+    rgb_u8: Rgb, U8; rgb_u16: Rgb, U16; rgb_f16: Rgb, F16; rgb_f32: Rgb, F32;
     gray_u8: Grayscale, U8; gray_u16: Grayscale, U16; gray_f32: Grayscale, F32;
     cmyk_u8: Cmyk, U8; cmyk_u16: Cmyk, U16; cmyk_f32: Cmyk, F32;
     lab_u8: Lab, U8; lab_u16: Lab, U16; lab_f32: Lab, F32;

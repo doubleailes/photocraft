@@ -17,7 +17,6 @@
 //!   to compress.
 
 use photocraft_cms::{Builtin, Intent, Lut3d, Transform};
-use photocraft_color::SampleType;
 use photocraft_doc::Document;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -105,7 +104,7 @@ impl HdrPreview {
 
 /// Is a 32-bit preview adjustment active for `doc` (a 32-bit document with non-default options)?
 pub fn hdr_active(c: &ColorState, doc: &Document) -> bool {
-    doc.depth == SampleType::F32 && c.hdr.get(&doc.id).is_some_and(|h| !h.is_identity())
+    doc.depth.is_float() && c.hdr.get(&doc.id).is_some_and(|h| !h.is_identity())
 }
 
 /// Changes whenever the display LUT of `doc` changes because of this module (for UI caches).
@@ -238,7 +237,7 @@ fn has_doc(s: &Session) -> std::result::Result<(), String> {
 
 fn is_32(s: &Session) -> std::result::Result<(), String> {
     let d = s.active().ok_or("no document open")?;
-    if d.doc.depth == SampleType::F32 { Ok(()) } else { Err("32-bit Preview Options apply to 32-bit documents".into()) }
+    if d.doc.depth.is_float() { Ok(()) } else { Err("32-bit Preview Options apply to 32-bit documents".into()) }
 }
 
 /// Select a simulated proof (`kind`) and turn Proof Colors on. Plates use the working CMYK.
