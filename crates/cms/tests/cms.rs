@@ -639,3 +639,39 @@ fn windows_srgb_is_the_builtin_srgb() {
     assert_ne!(p.content_hash(), srgb().content_hash());
     assert!(p.same_colors(srgb()));
 }
+
+/// `convert_u8_to_f32` (the 8-bit → float path of opening files as linear documents) gives
+/// what the exact float path gives for `v / 255`, whether it reads the 256-entry curve tables
+/// (profile → linear) or falls back to the exact pipeline (output curves present).
+#[test]
+fn u8_to_f32_matches_the_exact_float_path() {
+    let pairs = [
+        (Builtin::Srgb, Builtin::LinearSrgb),
+        (Builtin::DisplayP3, Builtin::LinearSrgb),
+        (Builtin::AdobeRgbCompat, Builtin::LinearSrgb),
+        (Builtin::ProPhotoCompat, Builtin::LinearSrgb),
+        (Builtin::GrayGamma22, Builtin::LinearGray),
+        (Builtin::Srgb, Builtin::AdobeRgbCompat),
+    ];
+    for (src, dst) in pairs {
+        let t = Transform::new(src.profile(), dst.profile(), Intent::RelativeColorimetric, false).unwrap();
+        let (n, m) = (t.inputs(), t.outputs());
+        // Every byte on every channel, in a few mixes, plus an alpha channel to copy.
+        let mut bytes = Vec::new();
+        for v in 0..=255u8 {
+            for mix in [[v, v, v], [v, 255 - v, v / 2], [0, v, 255], [255, 0, v]] {
+                bytes.extend_from_slice(&mix[..n]);
+                bytes.push(v);
+            }
+        }
+        let floats: Vec<f32> = bytes.iter().map(|b| *b as f32 / 255.0).collect();
+        let px = bytes.len() / (n + 1);
+        let mut fast = vec![0.0f32; px * (m + 1)];
+        let mut exact = vec![0.0f32; px * (m + 1)];
+        t.convert_u8_to_f32(&bytes, n + 1, &mut fast, m + 1, true);
+        t.convert_f32(&floats, n + 1, &mut exact, m + 1, true);
+        for (i, (a, b)) in fast.iter().zip(&exact).enumerate() {
+            assert!((a - b).abs() <= 2e-6 + 1e-5 * b.abs(), "{src:?} -> {dst:?}, sample {i}: {a} vs {b}");
+        }
+    }
+}

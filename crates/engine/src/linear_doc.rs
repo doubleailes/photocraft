@@ -14,9 +14,9 @@
 use std::sync::Arc;
 
 use photocraft_cms::{Builtin, ColorSpace, Intent, Profile, Transform, TransformOptions};
-use photocraft_color::{Color, ColorMode, SampleType};
+use photocraft_color::{Color, ColorMode, SampleType, read_sample, write_sample};
 use photocraft_doc::{Document, Effect, Fill, FxPaint, Pattern};
-use photocraft_geom::Rect;
+use photocraft_geom::{Rect, TILE_SIZE};
 use photocraft_raster::Surface;
 use serde_json::{Value, json};
 
@@ -103,19 +103,32 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
     Ok(true)
 }
 
-/// `s` (pixels in the document's encoded profile, `mode`) as linear pixels of `depth`. The
-/// work goes through 32-bit float, one tile at a time in parallel, so 16-bit sources keep their
-/// precision until the final rounding.
+/// `s` (pixels in the document's encoded profile, `mode`) as linear pixels of `depth`. Each
+/// tile goes source → 32-bit float → `t` → `depth` on its own, in parallel, so 16-bit sources
+/// keep their precision until the final rounding and no full-size float copy is ever held.
 fn linearize_surface(s: &Surface, mode: ColorMode, t: &Transform, depth: SampleType) -> Surface {
-    let wide: Surface;
-    let src: &Surface = if s.format().sample == SampleType::F32 {
-        s
-    } else {
-        wide = s.convert(s.format().with_sample(SampleType::F32));
-        &wide
-    };
-    let linear = convert_surface(src, mode, src.format(), t);
-    if depth == SampleType::F32 { linear } else { linear.convert(linear.format().with_sample(depth)) }
+    let sf = s.format();
+    let to = sf.with_sample(depth);
+    let (ss, n) = (sf.channels(), mode.color_channels());
+    if sf.mode != mode || t.inputs() != n || t.outputs() != n {
+        return s.convert(to);
+    }
+    let mut default = vec![0.0f32; ss];
+    t.convert_f32(&s.default_pixel(), ss, &mut default, ss, true);
+    let samples = (TILE_SIZE * TILE_SIZE) as usize * ss;
+    s.map_tiles_into(to, &default, |src, dst| {
+        let mut linear = vec![0.0f32; samples];
+        if sf.sample == SampleType::U8 {
+            // 8-bit files are the common case: exact curve tables instead of the pipeline.
+            t.convert_u8_to_f32(src, ss, &mut linear, ss, true);
+        } else {
+            let wide: Vec<f32> = (0..samples).map(|i| read_sample(src, sf.sample, i)).collect();
+            t.convert_f32(&wide, ss, &mut linear, ss, true);
+        }
+        for (i, v) in linear.iter().enumerate() {
+            write_sample(dst, depth, i, *v);
+        }
+    })
 }
 
 fn refresh_shapes(doc: &Document, layers: &mut [photocraft_doc::Layer]) {
