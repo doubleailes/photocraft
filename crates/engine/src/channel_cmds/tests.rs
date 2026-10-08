@@ -51,7 +51,14 @@ fn save_selection_new_and_operations() {
         assert_eq!(r["name"], "Alpha 1");
         let d = doc(&s);
         assert_eq!(d.channels[0].surface.format(), channel_format(d));
-        assert_eq!(d.channels[0].surface.format().sample, SampleType::ALL[[8, 16, 32].iter().position(|v| *v == depth).unwrap()]);
+        assert_eq!(
+            d.channels[0].surface.format().sample,
+            match depth {
+                8 => SampleType::U8,
+                16 => SampleType::U16,
+                _ => SampleType::F32,
+            }
+        );
         assert_eq!(chan(&s, 0, 5, 5), 1.0);
         assert_eq!(chan(&s, 0, 15, 5), 0.0);
 
