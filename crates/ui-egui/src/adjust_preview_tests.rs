@@ -113,7 +113,8 @@ fn preview_composite_matches_the_destructive_command() {
     let mut worst = (0.0f32, String::new());
     let mut fails = Vec::new();
     for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
-        for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        // Session documents are float: the command's session would linearise an integer one.
+        for depth in [SampleType::F16, SampleType::F32] {
             for selection in [false, true] {
                 let (doc, target) = document(mode, depth, selection);
                 for kind in KINDS {

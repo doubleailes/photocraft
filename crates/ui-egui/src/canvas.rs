@@ -2889,7 +2889,7 @@ mod tests {
         use photocraft_engine::color_cmds::resolve_profile;
         use photocraft_engine::display_color::Display;
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
-        // An sRGB-encoded document: identity on the sRGB display.
+        // A linear sRGB document: only the sRGB encode on the sRGB display, no colour transform.
         app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         app.run("edit.fill", json!({"color": "#cc8040"})).unwrap();
         let icc = |id: &str| Some(resolve_profile(id, None, None).unwrap().to_bytes());
@@ -2917,8 +2917,9 @@ mod tests {
         }
         assert_eq!(app.perf.last_refresh, "", "no re-render");
         let doc = app.session.documents()[0].doc.clone();
-        assert!(canvas_display(&app, &doc, Some(1)).0.unwrap().is_identity());
-        assert!(!canvas_display(&app, &doc, Some(4)).0.unwrap().is_identity());
+        let on = |d: u32| canvas_display(&app, &doc, Some(d)).0.unwrap();
+        assert!(on(1).encode_srgb && on(1).transform.is_none(), "sRGB display: encode only");
+        assert!(on(4).transform.is_some(), "Display P3: a colour transform");
         assert_ne!(app.canvases[&(id, 1)].tex_preview_key, app.canvases[&(id, 4)].tex_preview_key);
         // An edit updates both.
         app.run("edit.fill", json!({"color": "#2060c0"})).unwrap();
