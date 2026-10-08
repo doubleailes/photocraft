@@ -282,7 +282,8 @@ async fn open_png_and_inspect() {
     let o = json_of(&call(&client, "doc_open", json!({"path": "in.png"})).await);
     assert_eq!((o["width"].as_u64(), o["height"].as_u64()), (Some(8), Some(4)));
     let px = json_of(&call(&client, "command_run", json!({"id": "document.pixel", "params": {"x": 1, "y": 1}})).await);
-    assert!(px.to_string().contains("0.78"), "{px}");
+    // Document values: the 8-bit file opens as linear half float (level 200 → 0.578).
+    assert!(px.to_string().contains("0.577"), "{px}");
     client.cancel().await.unwrap();
     cleanup(&dir);
 }

@@ -550,7 +550,8 @@ mod tests {
     #[test]
     fn preview_stays_inside_the_selection_at_every_proxy_factor() {
         use photocraft_doc::SampleType;
-        for depth in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        // Session documents are float (an integer one would be linearised by the preview session).
+        for depth in [SampleType::F16, SampleType::F32] {
             let mut doc =
                 Document::with_background("p", photocraft_doc::Size::new(64, 64), photocraft_doc::ColorMode::Rgb, depth, photocraft_doc::Color::gray(0.5));
             let bg = doc.layers[0].id;

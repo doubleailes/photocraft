@@ -218,7 +218,7 @@ mod tests {
 
     fn doc() -> Document {
         let mut s = photocraft_engine::Session::new();
-        // An 8-bit document, as Photoshop shows it.
+        // A half-float (16 bits per channel) document, as Photoshop shows a 16-bit one.
         s.execute("file.new", json!({"width": 2400, "height": 1500, "resolution": 72, "background": "white"})).unwrap();
         (*s.active().unwrap().doc).clone()
     }
@@ -230,7 +230,7 @@ mod tests {
         assert_eq!(status_info_text(&d, "dimensions", "", ""), "2400 px x 1500 px (72 ppi)");
         assert_eq!(status_info_text(&d, "layers", "", ""), "1 Layer");
         assert_eq!(status_info_text(&d, "tool", "Brush Tool", ""), "Brush Tool");
-        assert!(status_info_text(&d, "profile", "", "sRGB IEC61966-2.1").ends_with("(8bpc)"));
+        assert!(status_info_text(&d, "profile", "", "sRGB IEC61966-2.1").ends_with("(16bpc)"));
     }
 
     #[test]
@@ -239,7 +239,7 @@ mod tests {
         rgb.icc_profile = Some(photocraft_engine::color_cmds::working_profile(rgb.mode).to_bytes());
         let before = rgb.icc_profile.clone();
         assert_eq!(profile_name(&rgb), "sRGB IEC61966-2.1");
-        assert_eq!(status_info_text(&rgb, "profile", "", &profile_name(&rgb)), "sRGB IEC61966-2.1 (8bpc)");
+        assert_eq!(status_info_text(&rgb, "profile", "", &profile_name(&rgb)), "sRGB IEC61966-2.1 (16bpc)");
         assert_eq!(rgb.icc_profile, before);
 
         let mut gray = doc();
@@ -275,8 +275,8 @@ mod tests {
     #[test]
     fn document_sizes_match_photoshop_rounding() {
         let d = doc();
-        // 2400 x 1500 x 3 bytes = 10.3M flattened, as Photoshop shows.
-        assert_eq!(status_info_text(&d, "sizes", "", ""), "Doc: 10.3M/13.7M");
+        // 2400 x 1500 x 3 channels x 2 bytes = 20.6M flattened, as Photoshop shows for 16 bits.
+        assert_eq!(status_info_text(&d, "sizes", "", ""), "Doc: 20.6M/27.5M");
         assert_eq!(fmt_bytes(512 * 1024), "512.0K");
     }
 

@@ -489,8 +489,8 @@ mod tests {
     }
 
     #[test]
-    fn commit_crops_to_the_moved_frame_at_8_and_16_bit() {
-        for depth in [SampleType::U8, SampleType::U16] {
+    fn commit_crops_to_the_moved_frame_at_half_and_full_float() {
+        for depth in [SampleType::F16, SampleType::F32] {
             let mut app = app(depth);
             app.run("select.rect", json!({"x": 60, "y": 40, "width": 1, "height": 1})).unwrap();
             app.run("edit.fill", json!({"color": "#ff0000"})).unwrap();
