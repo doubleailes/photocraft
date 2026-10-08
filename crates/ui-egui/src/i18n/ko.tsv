@@ -2717,3 +2717,16 @@ cameraRaw	Color	색상
 	% of all commits	전체 커밋 대비 %
 	Lines +/−	줄 +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: PR {prs}개, 커밋 {commits}개, 줄 +{added} / −{deleted} (Δ {delta}), 바이너리 +{binAdded} / −{binDeleted}, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	뷰어 옵션…
+	Viewer Options	뷰어 옵션
+	OCIO Display Transform	OCIO 디스플레이 변환
+	Display:	디스플레이:
+	View:	보기:
+	Look:	룩:
+	EV	EV
+	Viewer gamma (after the view)	뷰어 감마(보기 이후)
+	Viewer exposure in stops (before the view)	뷰어 노출(스톱, 보기 이전)
+	OCIO viewer on: click for the ICC monitor display	OCIO 뷰어 켜짐: 클릭하면 ICC 모니터 표시
+	Show documents through the OCIO display and view	OCIO 디스플레이와 보기로 문서 표시

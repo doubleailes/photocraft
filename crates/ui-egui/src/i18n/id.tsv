@@ -2551,3 +2551,16 @@ cameraRaw	Blending	Pembauran
 	% of all commits	% dari semua commit
 	Lines +/−	Baris +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: {prs} PR, {commits} commit, +{added} / −{deleted} baris (Δ {delta}), +{binAdded} / −{binDeleted} berkas biner, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	Opsi Penampil…
+	Viewer Options	Opsi Penampil
+	OCIO Display Transform	Transformasi Tampilan OCIO
+	Display:	Layar:
+	View:	Tampilan:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Gamma penampil (setelah tampilan)
+	Viewer exposure in stops (before the view)	Eksposur penampil dalam stop (sebelum tampilan)
+	OCIO viewer on: click for the ICC monitor display	Penampil OCIO aktif: klik untuk tampilan monitor ICC
+	Show documents through the OCIO display and view	Tampilkan dokumen melalui layar dan tampilan OCIO

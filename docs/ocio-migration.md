@@ -185,7 +185,8 @@ Started before phases 2–4, so it carries the part of phase 2 it needs.
 * **Viewer state** (`crates/engine/src/viewer.rs`). Session-wide `ColorState::viewer`:
   `ocio` (on/off), display, view, look, exposure, gamma. It lives in the engine, not
   `ui-egui/src/state.rs`, because the engine bakes the LUT and the CLI/MCP drive it the same way.
-  Not saved yet. Commands (no document needed, `{}` reports the state and the config's choices):
+  OCIO on/off, display, view and look are saved with the preferences (`viewer`); exposure and
+  gamma start neutral each launch, like Nuke. Commands (no document needed, `{}` reports the state and the config's choices):
   `view.viewerOptions` (View › Viewer Options…, all fields; the UI opens its dialog),
   `view.ocio.display` (`none` = off), `view.ocio.view`, `view.ocio.look` (`none`),
   `view.exposure`, `view.gamma`. Bad names or params are errors and change nothing.
@@ -199,8 +200,14 @@ Started before phases 2–4, so it carries the part of phase 2 it needs.
   exposure is a scene-linear gain before the view (or the sRGB encode), gamma applies to display
   values after it, for every document, with or without OCIO. Both are shader uniforms, so the
   GPU display LUT isn't rebuilt while dragging.
-* **Still open:** saving the viewer with the preferences/workspace, a viewer toolbar above the
-  canvas (Nuke-style quick pickers), Color Settings UI for `ocioConfig`, the channel view and
+* **UI.** The right end of the status bar is a viewer bar: an OCIO toggle, the display and view
+  pickers (while on), EV and γ fields. Edit › Color Settings has an `ocioConfig` field (the reply
+  and `edit.colorSettings {}` say which config is in use). Automation can't set it:
+  `edit.colorSettings` is refused there, and `ocioConfig` is listed with the path params.
+* **Verified on screen** (lavapipe): the GPU and CPU canvases show the same value (221 for white
+  at +1.5 EV through the ACES SDR view), and `canvas_16f::ocio_viewer_on_screen` checks the GPU
+  path against the sRGB curve.
+* **Still open:** a look picker in the viewer bar, the channel view and
   Print through the viewer, a 65 536-entry table or analytic WGSL (ocio-rs #9) instead of the
   baked LUT, negative/out-of-gamut linear values (the shaper clamps them to 0), and per-document
   source spaces once phase 3 adds `Document.color_space`.

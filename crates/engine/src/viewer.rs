@@ -82,6 +82,26 @@ impl ViewerSettings {
     pub fn inv_gamma(&self) -> f32 {
         1.0 / self.gamma.clamp(GAMMA_RANGE.0, GAMMA_RANGE.1)
     }
+
+    /// What the preferences keep: OCIO on/off, display, view and look. Exposure and gamma are
+    /// per sitting (like Nuke's viewer) and start neutral.
+    pub fn saved(&self) -> Value {
+        json!({"ocio": self.ocio, "display": self.display, "view": self.view, "look": self.look})
+    }
+
+    /// Restore [`ViewerSettings::saved`]. Unknown or ill-typed keys are ignored; names aren't
+    /// checked against the config here (a viewer the config can't show falls back to the ICC
+    /// display, and the viewer commands say why).
+    pub fn load_saved(&mut self, v: &Value) {
+        if let Some(b) = v.get("ocio").and_then(Value::as_bool) {
+            self.ocio = b;
+        }
+        for (k, slot) in [("display", &mut self.display), ("view", &mut self.view), ("look", &mut self.look)] {
+            if let Some(s) = v.get(k).and_then(Value::as_str) {
+                *slot = s.chars().take(256).collect();
+            }
+        }
+    }
 }
 
 /// The viewer's display, view and look as resolved against the config.
@@ -286,7 +306,12 @@ fn apply(s: &mut Session, cmd: &str, p: &Value) -> Result<Value> {
     if v.ocio {
         resolve(&s.color.ocio()?, &v)?;
     }
+    let persist = v.saved() != s.color.viewer.saved();
     s.color.viewer = v;
+    if persist {
+        // Saved with the preferences.
+        s.prefs.edit(|_| ());
+    }
     Ok(s.color.viewer_report())
 }
 

@@ -2172,3 +2172,16 @@
 	% of all commits	% aller Commits
 	Lines +/−	Zeilen +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: {prs} PRs, {commits} Commits, +{added} / −{deleted} Zeilen (Δ {delta}), +{binAdded} / −{binDeleted} Binärdateien, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	Betrachteroptionen…
+	Viewer Options	Betrachteroptionen
+	OCIO Display Transform	OCIO-Anzeigetransformation
+	Display:	Anzeige:
+	View:	Ansicht:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Betrachter-Gamma (nach der Ansicht)
+	Viewer exposure in stops (before the view)	Betrachter-Belichtung in Blendenstufen (vor der Ansicht)
+	OCIO viewer on: click for the ICC monitor display	OCIO-Betrachter an: Klicken für die ICC-Monitoranzeige
+	Show documents through the OCIO display and view	Dokumente durch OCIO-Anzeige und -Ansicht darstellen

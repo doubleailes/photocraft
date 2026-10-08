@@ -2141,3 +2141,16 @@ cameraRaw	Blending	混合
 	% of all commits	占全部提交的 %
 	Lines +/−	行数 +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}：{prs} 个 PR，{commits} 次提交，行 +{added} / −{deleted}（Δ {delta}），二进制文件 +{binAdded} / −{binDeleted}，{first} – {last}
+
+# OCIO viewer
+	Viewer Options…	查看器选项…
+	Viewer Options	查看器选项
+	OCIO Display Transform	OCIO 显示变换
+	Display:	显示：
+	View:	视图：
+	Look:	外观：
+	EV	EV
+	Viewer gamma (after the view)	查看器伽马（视图之后）
+	Viewer exposure in stops (before the view)	查看器曝光（档，视图之前）
+	OCIO viewer on: click for the ICC monitor display	OCIO 查看器已开启：单击切换为 ICC 显示器显示
+	Show documents through the OCIO display and view	通过 OCIO 显示和视图显示文档

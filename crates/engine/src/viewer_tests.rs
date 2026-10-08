@@ -128,3 +128,42 @@ fn a_missing_config_is_an_error_not_a_crash() {
     assert!(crate::color_cmds::validate_settings(&s.color.settings).is_ok());
     assert!(s.color.canvas_display(&doc).unwrap().viewer.is_some());
 }
+
+#[test]
+fn display_view_and_look_are_saved_with_the_preferences() {
+    let mut s = session();
+    let look = s.color.ocio().unwrap().looks()[0].clone();
+    s.execute("view.viewerOptions", json!({"display": "Display P3 - Display", "view": "Un-tone-mapped", "look": look, "exposure": 2.0})).unwrap();
+    let text = s.prefs_to_json();
+    let mut t = Session::new();
+    t.load_prefs_json(&text).unwrap();
+    let v = &t.color.viewer;
+    assert!(v.ocio);
+    assert_eq!((v.display.as_str(), v.view.as_str(), v.look.as_str()), ("Display P3 - Display", "Un-tone-mapped", look.as_str()));
+    assert_eq!((v.exposure, v.gamma), (0.0, 1.0), "exposure and gamma start neutral");
+    // Older files have no viewer; hostile ones are ignored key by key.
+    let mut u = Session::new();
+    u.load_prefs_json(r#"{"viewer": {"ocio": "yes", "display": 7, "view": "Raw"}}"#).unwrap();
+    assert_eq!((u.color.viewer.ocio, u.color.viewer.display.as_str(), u.color.viewer.view.as_str()), (false, "", "Raw"));
+    // A saved viewer the config can't show leaves the ICC display on.
+    u.color.viewer.ocio = true;
+    u.color.viewer.view = "nope".into();
+    u.execute("file.new", json!({"width": 4, "height": 4})).unwrap();
+    let doc = u.active().unwrap().doc.clone();
+    assert!(u.color.canvas_display(&doc).unwrap().viewer.is_none());
+    assert!(u.color.viewer_resolved().is_err());
+}
+
+#[test]
+fn color_settings_choose_the_ocio_config() {
+    let mut s = session();
+    let r = s.execute("edit.colorSettings", json!({})).unwrap();
+    assert_eq!(r["ocio"]["origin"], "default");
+    let r = s.execute("edit.colorSettings", json!({"ocioConfig": " ocio://studio-config-latest "})).unwrap();
+    assert_eq!((r["ocio"]["origin"].as_str(), r["ocio"]["source"].as_str()), (Some("settings"), Some("ocio://studio-config-latest")));
+    assert_eq!(s.color.settings.ocio_config, "ocio://studio-config-latest");
+    assert!(s.execute("edit.colorSettings", json!({"ocioConfig": "/no/such.ocio"})).is_err());
+    assert_eq!(s.color.settings.ocio_config, "ocio://studio-config-latest", "unchanged after an error");
+    s.execute("edit.colorSettings", json!({"ocioConfig": ""})).unwrap();
+    assert_eq!(s.color.ocio().unwrap().source, photocraft_ocio::DEFAULT_CONFIG);
+}

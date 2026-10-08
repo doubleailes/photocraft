@@ -219,7 +219,7 @@ fn params_contain_ambient_path(id: &str, params: &Value) -> bool {
         "layer.quickExportAsPng" | "layer.exportAs" | "image.applyDataSet" => &["path"],
         "image.mode.rgb" | "image.mode.grayscale" => &["profile"],
         "edit.assignProfile" | "edit.convertToProfile" | "edit.profileInfo" | "view.proofSetup" | "view.gamutWarning" => &["profile"],
-        "edit.colorSettings" => &["workingRgb", "workingCmyk", "workingGray"],
+        "edit.colorSettings" => &["workingRgb", "workingCmyk", "workingGray", "ocioConfig"],
         _ => &[],
     };
     keys.iter().any(|key| {

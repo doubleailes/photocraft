@@ -2133,3 +2133,16 @@ cameraRaw	Color	Barvy
 	% of all commits	% všech commitů
 	Lines +/−	Řádky +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: PR: {prs}, commity: {commits}, řádky +{added} / −{deleted} (Δ {delta}), binární soubory +{binAdded} / −{binDeleted}, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	Možnosti prohlížeče…
+	Viewer Options	Možnosti prohlížeče
+	OCIO Display Transform	Transformace zobrazení OCIO
+	Display:	Displej:
+	View:	Pohled:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Gama prohlížeče (po pohledu)
+	Viewer exposure in stops (before the view)	Expozice prohlížeče v EV (před pohledem)
+	OCIO viewer on: click for the ICC monitor display	Prohlížeč OCIO zapnut: klikněte pro zobrazení ICC monitoru
+	Show documents through the OCIO display and view	Zobrazovat dokumenty přes displej a pohled OCIO

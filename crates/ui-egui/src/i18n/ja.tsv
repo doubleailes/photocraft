@@ -2116,3 +2116,16 @@ cameraRaw	Color	カラー
 	% of all commits	全コミットに占める割合 (%)
 	Lines +/−	行数 +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: PR {prs} 件、コミット {commits} 件、行 +{added} / −{deleted} (Δ {delta})、バイナリ +{binAdded} / −{binDeleted}、{first} – {last}
+
+# OCIO viewer
+	Viewer Options…	ビューアオプション…
+	Viewer Options	ビューアオプション
+	OCIO Display Transform	OCIO ディスプレイ変換
+	Display:	ディスプレイ:
+	View:	ビュー:
+	Look:	ルック:
+	EV	EV
+	Viewer gamma (after the view)	ビューアのガンマ（ビューの後）
+	Viewer exposure in stops (before the view)	ビューアの露光量（段、ビューの前）
+	OCIO viewer on: click for the ICC monitor display	OCIO ビューアオン：クリックで ICC モニター表示
+	Show documents through the OCIO display and view	OCIO のディスプレイとビューでドキュメントを表示

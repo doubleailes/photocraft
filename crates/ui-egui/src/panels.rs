@@ -950,8 +950,11 @@ pub fn status_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
             ui.horizontal_centered(|ui| {
                 if t.pro {
                     crate::chrome_ui::status_bar_pro(app, ui);
-                    // Background job progress with Cancel, at the right end (#210).
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| crate::jobs_ui::status_progress(app, ui));
+                    // Background job progress with Cancel, at the right end (#210), then the viewer.
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        crate::jobs_ui::status_progress(app, ui);
+                        crate::viewer_ui::status_controls(app, ui);
+                    });
                     return;
                 }
                 if let (Some(st), Some(i)) = (app.session.active(), app.session.active_index()) {
@@ -988,6 +991,8 @@ pub fn status_bar(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
                         ui.add_space(6.0);
                         crate::jobs_ui::status_progress(app, ui);
                     }
+                    ui.add_space(6.0);
+                    crate::viewer_ui::status_controls(app, ui);
                 });
             });
         });

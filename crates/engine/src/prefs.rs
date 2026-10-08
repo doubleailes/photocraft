@@ -1252,6 +1252,7 @@ impl Session {
         let mut v = self.prefs().to_json();
         if let Value::Object(m) = &mut v {
             m.insert("colorSettings".into(), serde_json::to_value(&self.color.settings).unwrap_or(Value::Null));
+            m.insert("viewer".into(), self.color.viewer.saved());
             m.insert("version".into(), json!(1));
             m.insert("presets".into(), self.presets.to_json(self));
         }
@@ -1264,10 +1265,14 @@ impl Session {
         let mut v: Value = serde_json::from_str(s).map_err(|e| format!("preferences: {e}"))?;
         let color = v.as_object_mut().and_then(|m| m.remove("colorSettings"));
         let presets = v.as_object_mut().and_then(|m| m.remove("presets"));
+        let viewer = v.as_object_mut().and_then(|m| m.remove("viewer"));
         let prefs: Preferences = serde_json::from_value(v).map_err(|e| format!("preferences: {e}"))?;
         if let Some(c) = color {
             self.color.settings = serde_json::from_value(c).unwrap_or_default();
             photocraft_compose::psblend::set_text_gamma(self.color.settings.blend_text_gamma);
+        }
+        if let Some(v) = viewer {
+            self.color.viewer.load_saved(&v);
         }
         self.prefs.edit(|p| *p = prefs);
         if let Some(v) = presets {

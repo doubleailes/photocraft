@@ -2204,3 +2204,16 @@ cameraRaw	Amount	Cantidad
 	% of all commits	% de todos los commits
 	Lines +/−	Líneas +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: {prs} PR, {commits} commits, +{added} / −{deleted} líneas (Δ {delta}), +{binAdded} / −{binDeleted} archivos binarios, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	Opciones del visor…
+	Viewer Options	Opciones del visor
+	OCIO Display Transform	Transformación de visualización OCIO
+	Display:	Pantalla:
+	View:	Vista:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Gamma del visor (después de la vista)
+	Viewer exposure in stops (before the view)	Exposición del visor en pasos (antes de la vista)
+	OCIO viewer on: click for the ICC monitor display	Visor OCIO activado: haga clic para la visualización ICC del monitor
+	Show documents through the OCIO display and view	Mostrar los documentos mediante la pantalla y la vista OCIO

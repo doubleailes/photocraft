@@ -265,3 +265,21 @@ fn thirty_two_bit_preview_exposes_values_above_one() {
     eprintln!("shown {got}, want {want:.1} (clipped would be {clipped:.1})");
     assert!((got - want).abs() <= 3.0, "shown {got}, want {want:.1} (clipped {clipped:.1})");
 }
+
+#[test]
+fn ocio_viewer_on_screen() {
+    let _gpu = gpu_lock();
+    let blank = || Document::new("blank", Size::new(64, 64), ColorMode::Rgb, SampleType::F32);
+    // A linear white document, −2 stops, through sRGB - Display / Un-tone-mapped: linear 0.25
+    // shows as sRGB(0.25) = 137 (display mode 3: exposure, log shaper, f16 LUT, gamma).
+    let new = ("file.new", json!({"width": 512, "height": 512, "depth": 32, "background": "white"}));
+    let plain = ("view.viewerOptions", json!({"ocio": true, "display": "sRGB - Display", "view": "Un-tone-mapped", "exposure": -2.0}));
+    let Some(img) = screen(blank(), &[new.clone(), plain], "photocraft-canvas-ocio-untonemapped.png") else { return };
+    let got = img.green(img.w * 2 / 5, img.h / 2) as i32;
+    assert!((got - 137).abs() <= 3, "shown {got}, want 137");
+    // The ACES SDR view tone-maps: linear 1.0 is well below display white.
+    let aces = ("view.viewerOptions", json!({"ocio": true, "display": "sRGB - Display", "view": "", "exposure": 0.0}));
+    let Some(img) = screen(blank(), &[new, aces], "photocraft-canvas-ocio-aces.png") else { return };
+    let got = img.green(img.w * 2 / 5, img.h / 2) as i32;
+    assert!((150..245).contains(&got), "shown {got}");
+}

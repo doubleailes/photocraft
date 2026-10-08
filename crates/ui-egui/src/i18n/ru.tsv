@@ -2407,3 +2407,16 @@ cameraRaw	Roughness	Неровность
 	% of all commits	% от всех коммитов
 	Lines +/−	Строки +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: PR: {prs}, коммиты: {commits}, строки +{added} / −{deleted} (Δ {delta}), двоичные файлы +{binAdded} / −{binDeleted}, {first} – {last}
+
+# OCIO viewer
+	Viewer Options…	Параметры просмотра…
+	Viewer Options	Параметры просмотра
+	OCIO Display Transform	Преобразование отображения OCIO
+	Display:	Дисплей:
+	View:	Вид:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Гамма просмотра (после вида)
+	Viewer exposure in stops (before the view)	Экспозиция просмотра в ступенях (до вида)
+	OCIO viewer on: click for the ICC monitor display	Просмотр OCIO включён: нажмите для отображения ICC монитора
+	Show documents through the OCIO display and view	Показывать документы через дисплей и вид OCIO

@@ -845,6 +845,9 @@ fn color_settings(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = str_of("monitorProfile") {
         next.monitor_profile = v;
     }
+    if let Some(v) = str_of("ocioConfig") {
+        next.ocio_config = v.trim().to_string();
+    }
     for (k, slot) in [("policyRgb", &mut next.policy_rgb), ("policyGray", &mut next.policy_gray)] {
         if let Some(v) = p.get(k).and_then(Value::as_str) {
             *slot = Policy::parse(v).ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: format!("`{k}` must be preserve|convert|off") })?;
@@ -892,6 +895,10 @@ fn color_settings(s: &mut Session, p: &Value) -> Result<Value> {
         "monitorDetected": !s.color.displays.is_empty(),
         "monitorStatus": s.color.monitor_status(),
         "displays": s.color.display_statuses(),
+        "ocio": match s.color.ocio() {
+            Ok(o) => json!({"source": o.source, "origin": o.origin.id(), "name": o.name()}),
+            Err(e) => json!({"error": e.to_string()}),
+        },
     }))
 }
 
@@ -980,7 +987,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "edit.colorSettings",
             "Color Settings…",
             ["Edit"],
-            r##"{"workingRgb":"srgb|display-p3|adobe-rgb-compat|prophoto-compat|linear-srgb|rec2020","workingCmyk":"coated-cmyk","workingGray":"sgray|gray-gamma-2.2","policyRgb":"preserve|convert|off","policyGray":"preserve|convert|off","askOnMismatch":bool=true,"askOnPaste":bool=true,"askOnMissing":bool=false,"intent":"relative|perceptual|saturation|absolute","blendTextGamma":1.0..2.2|bool=1.45,"bpc":bool=true,"dither":bool=true,"monitorProfile":"auto|srgb|display-p3|adobe-rgb-compat|prophoto-compat|rec2020","reset":bool=false} (working spaces and the monitor profile also accept .icc paths; monitor `auto` = the main display's profile when the platform provides it, else sRGB; the reply's `monitorStatus` says which profile is in use and why: source auto|manual|fallback, reason)"##,
+            r##"{"workingRgb":"srgb|display-p3|adobe-rgb-compat|prophoto-compat|linear-srgb|rec2020","workingCmyk":"coated-cmyk","workingGray":"sgray|gray-gamma-2.2","policyRgb":"preserve|convert|off","policyGray":"preserve|convert|off","askOnMismatch":bool=true,"askOnPaste":bool=true,"askOnMissing":bool=false,"intent":"relative|perceptual|saturation|absolute","blendTextGamma":1.0..2.2|bool=1.45,"bpc":bool=true,"dither":bool=true,"monitorProfile":"auto|srgb|display-p3|adobe-rgb-compat|prophoto-compat|rec2020","ocioConfig":text,"reset":bool=false} (ocioConfig: the viewer's OCIO config, a .ocio path or an ocio:// URI, empty = $OCIO, else ocio://cg-config-latest; the reply's `ocio` says which config is in use; working spaces and the monitor profile also accept .icc paths; monitor `auto` = the main display's profile when the platform provides it, else sRGB; the reply's `monitorStatus` says which profile is in use and why: source auto|manual|fallback, reason)"##,
             always,
             color_settings,
             true,

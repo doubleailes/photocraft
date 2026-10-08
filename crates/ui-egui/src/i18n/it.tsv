@@ -2206,3 +2206,16 @@ cameraRaw	Amount	Quantità
 	Lines +/−	Righe +/−
 	@{login}: {prs} PRs, {commits} commits, +{added} / −{deleted} lines (Δ {delta}), +{binAdded} / −{binDeleted} binary assets, {first} – {last}	@{login}: {prs} PR, {commits} commit, +{added} / −{deleted} righe (Δ {delta}), +{binAdded} / −{binDeleted} risorse binarie, {first} – {last}
 	Convert to Layers	Converti in livelli
+
+# OCIO viewer
+	Viewer Options…	Opzioni visualizzatore…
+	Viewer Options	Opzioni visualizzatore
+	OCIO Display Transform	Trasformazione di visualizzazione OCIO
+	Display:	Display:
+	View:	Vista:
+	Look:	Look:
+	EV	EV
+	Viewer gamma (after the view)	Gamma del visualizzatore (dopo la vista)
+	Viewer exposure in stops (before the view)	Esposizione del visualizzatore in stop (prima della vista)
+	OCIO viewer on: click for the ICC monitor display	Visualizzatore OCIO attivo: fai clic per la visualizzazione ICC del monitor
+	Show documents through the OCIO display and view	Mostra i documenti tramite display e vista OCIO
