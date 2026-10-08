@@ -8,8 +8,9 @@ use crate::menus::is_live;
 
 /// Minimum number of live catalog items. Raise it when parity grows; never lower it, except
 /// for items this fork removes on purpose (`docs/ocio-migration.md`: 627 → 619 when the CMYK,
-/// Lab, Indexed, Color Table, Bitmap, Duotone, Multichannel and Trap commands went).
-pub const FLOOR: usize = 619;
+/// Lab, Indexed, Color Table, Bitmap, Duotone, Multichannel and Trap commands went, 618 with
+/// 8 Bits/Channel).
+pub const FLOOR: usize = 618;
 
 /// One top-level menu's coverage.
 #[derive(Clone, Debug, serde::Serialize)]

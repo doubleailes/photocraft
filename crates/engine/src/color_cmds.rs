@@ -1301,10 +1301,14 @@ mod settings_tests {
     fn mode_conversion_uses_working_spaces() {
         let mut s = Session::new();
         s.execute("edit.colorSettings", json!({"workingRgb": "rec2020"})).unwrap();
-        // Integer documents (no longer made by New or Open, see `linear_doc`).
+        // An integer document is converted to linear half float as it enters the session; an
+        // explicit "working" profile converts into the working space.
         for depth in [SampleType::U8, SampleType::U16] {
             s.add_document(Document::with_background("g", photocraft_doc::Size::new(8, 8), ColorMode::Grayscale, depth, Color::gray(0.5)), None);
-            s.execute("image.mode.rgb", json!({})).unwrap();
+            let d = &s.active().unwrap().doc;
+            assert_eq!(d.depth, SampleType::F16, "{depth:?}");
+            assert!(crate::linear_doc::is_linear(d), "{depth:?}");
+            s.execute("image.mode.rgb", json!({"profile": "working"})).unwrap();
             let d = &s.active().unwrap().doc;
             assert_eq!(d.mode, ColorMode::Rgb);
             assert!(desc(d).unwrap().contains("2020"), "depth {depth:?}: {:?}", desc(d));

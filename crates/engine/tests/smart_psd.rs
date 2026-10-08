@@ -15,7 +15,7 @@ const H: i32 = 64;
 
 fn session(depth: u64) -> Session {
     let mut s = Session::new();
-    photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": W, "height": H, "depth": depth}));
+    s.execute("file.new", json!({"width": W, "height": H, "depth": depth})).unwrap();
     s.execute("layer.new.layer", json!({})).unwrap();
     s.edit("paint", |doc, active| {
         let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();
@@ -127,7 +127,9 @@ fn smart_objects_and_filters_survive_psd() {
         let (name, src) = source_bytes(&back.metadata, &after.source).unwrap();
         assert!(name.ends_with(".psb"), "{name}");
         let inner = decode_source(&name, &src).unwrap();
-        assert_eq!((inner.size, inner.layers.len(), inner.depth), (nested.size, nested.layers.len(), nested.depth));
+        // PSD has no half float: a half-float source comes back as 32-bit float.
+        let depth_back = if nested.depth == photocraft_color::SampleType::F16 { photocraft_color::SampleType::F32 } else { nested.depth };
+        assert_eq!((inner.size, inner.layers.len(), inner.depth), (nested.size, nested.layers.len(), depth_back));
         assert!(max_diff(&photocraft_compose::flatten(&inner).px, &photocraft_compose::flatten(&nested).px) <= 1.0 / 255.0 + 1e-6);
         // And it re-renders from that source like the original did.
         let mut l = back.layer(photocraft_doc::LayerId(bid)).unwrap().clone();
@@ -275,7 +277,7 @@ fn camera_raw_psd_fixture() {
 fn smart_filters_survive_psd_in_rgb_and_grayscale() {
     for (mode, depth) in [("rgb", 8), ("rgb", 16), ("grayscale", 8), ("grayscale", 16)] {
         let mut s = Session::new();
-        photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": 32, "height": 24, "mode": mode, "depth": depth}));
+        s.execute("file.new", json!({"width": 32, "height": 24, "mode": mode, "depth": depth})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("select.rect", json!({"x": 4, "y": 4, "width": 20, "height": 12})).unwrap();
         s.execute("edit.fill", json!({"color": "#c83c28"})).unwrap();
@@ -302,7 +304,12 @@ fn smart_filters_survive_psd_in_rgb_and_grayscale() {
         let px = photocraft_engine::smart_cmds::render(&doc, &unfiltered).unwrap().unwrap();
         let (x, y) = (10 - item.rect.left, 8 - item.rect.top);
         let at = (y as usize * w + x as usize) * usize::from(bits / 8);
-        let stored = if bits == 8 { f32::from(first[at]) / 255.0 } else { f32::from(u16::from_be_bytes([first[at], first[at + 1]])) / 65535.0 };
+        let stored = match bits {
+            8 => f32::from(first[at]) / 255.0,
+            16 => f32::from(u16::from_be_bytes([first[at], first[at + 1]])) / 65535.0,
+            // Half-float documents save 32-bit float.
+            _ => f32::from_be_bytes([first[at], first[at + 1], first[at + 2], first[at + 3]]),
+        };
         let expect = px.sample_channel(10, 8, 0);
         assert!((stored - expect).abs() < 0.01, "{mode} {depth}: slot 0 holds {stored}, expected {expect}");
     }
@@ -315,7 +322,7 @@ fn smart_filters_survive_psd_in_rgb_and_grayscale() {
 fn photoshop_samples() {
     for (mode, depth) in [("rgb", 8), ("rgb", 16), ("rgb", 32), ("grayscale", 8)] {
         let mut s = Session::new();
-        photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": W, "height": H, "mode": mode, "depth": depth}));
+        s.execute("file.new", json!({"width": W, "height": H, "mode": mode, "depth": depth})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("select.rect", json!({"x": 10, "y": 8, "width": 50, "height": 40})).unwrap();
         s.execute("edit.fill", json!({"color": "#c83c28"})).unwrap();
@@ -336,7 +343,7 @@ fn photoshop_samples() {
 fn perf_24mp_smart_object_export() {
     let (w, h) = (6000, 4000);
     let mut s = Session::new();
-    photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": w, "height": h, "depth": 8}));
+    s.execute("file.new", json!({"width": w, "height": h, "depth": 8})).unwrap();
     s.execute("layer.new.layer", json!({})).unwrap();
     s.edit("paint", |doc, active| {
         let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();

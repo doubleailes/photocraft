@@ -1053,11 +1053,12 @@ mod tests {
         assert!((found[0]["angle"].as_f64().unwrap() - 6.0).abs() < 1.0);
         let d = &s.documents()[1].doc;
         assert!((d.size.width as i64 - 158).abs() <= 4 && (d.size.height as i64 - 108).abs() <= 4, "{:?}", d.size);
-        assert_eq!(d.depth, SampleType::U16);
-        // Upright: the photo's horizontal gradient runs along x.
+        // The 16-bit scan entered the session as linear half float.
+        assert_eq!(d.depth, SampleType::F16);
+        // Upright: the photo's horizontal gradient runs along x (linear values, darker range).
         let l = d.layers[0].surface().unwrap();
         let (a, b) = (l.rgba(10, d.size.height as i32 / 2)[0], l.rgba(d.size.width as i32 - 10, d.size.height as i32 / 2)[0]);
-        assert!(b > a + 0.15, "{a} {b}");
+        assert!(b > a + 0.05, "{a} {b}");
         let (c, e) = (l.rgba(d.size.width as i32 / 2, 6)[0], l.rgba(d.size.width as i32 / 2, d.size.height as i32 - 6)[0]);
         assert!((c - e).abs() < 0.05);
     }

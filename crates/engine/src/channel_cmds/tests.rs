@@ -3,7 +3,7 @@ use photocraft_color::SampleType;
 
 fn session_depth(depth: u32) -> Session {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20, "depth": depth}));
+    s.execute("file.new", json!({"width": 40, "height": 20, "depth": depth})).unwrap();
     s
 }
 
@@ -26,6 +26,11 @@ fn sel_at(s: &Session, x: i32, y: i32) -> f32 {
 fn px(s: &Session, x: i32, y: i32) -> Vec<f32> {
     let d = s.active().unwrap();
     d.doc.layer(d.active_layer.unwrap()).unwrap().surface().unwrap().pixel(x, y)
+}
+
+/// A picked sRGB level (0–255) as a linear document value.
+fn lin(level: f32) -> f32 {
+    photocraft_color::convert::srgb_to_linear(level / 255.0)
 }
 
 fn rect(s: &mut Session, x: i32, y: i32, w: u32, h: u32, mode: &str) {
@@ -54,9 +59,8 @@ fn save_selection_new_and_operations() {
         assert_eq!(
             d.channels[0].surface.format().sample,
             match depth {
-                8 => SampleType::U8,
-                16 => SampleType::U16,
-                _ => SampleType::F32,
+                32 => SampleType::F32,
+                _ => SampleType::F16,
             }
         );
         assert_eq!(chan(&s, 0, 5, 5), 1.0);
@@ -109,7 +113,7 @@ fn load_selection_operations_and_invert() {
 #[test]
 fn load_transparency_mask_and_composite() {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 20, "height": 10, "background": "transparent"}));
+    s.execute("file.new", json!({"width": 20, "height": 10, "background": "transparent"})).unwrap();
     rect(&mut s, 0, 0, 5, 10, "replace");
     s.execute("edit.fill", json!({"color": "#ffffff"})).unwrap();
     s.execute("select.deselect", json!({})).unwrap();
@@ -191,7 +195,7 @@ fn shortcut_slots_target_channels() {
     assert_eq!(s.active().unwrap().channel_view.target, ChannelTarget::Composite);
     // Grayscale: ⌘3 is the first alpha channel.
     let mut g = Session::new();
-    crate::linear_doc::legacy_new(&mut g, &json!({"width": 4, "height": 4, "mode": "gray"}));
+    g.execute("file.new", json!({"width": 4, "height": 4, "mode": "gray"})).unwrap();
     g.execute("channel.new", json!({})).unwrap();
     g.execute("channel.target.slot3", json!({})).unwrap();
     assert_eq!(g.active().unwrap().channel_view.target, ChannelTarget::Alpha(0));
@@ -209,8 +213,9 @@ fn painting_filtering_and_adjusting_into_an_alpha_channel() {
         assert_eq!(chan(&s, 0, 30, 10), 0.0);
         assert_eq!(px(&s, 10, 10), before);
         // Erasing paints the background colour (white) on channels; use black foreground fill.
+        // Picked colours go into channels as data: 50% gray is 0.5, not linearised.
         s.execute("edit.fill", json!({"color": "#808080"})).unwrap();
-        assert!((chan(&s, 0, 30, 10) - 0.5).abs() < 0.01);
+        assert!((chan(&s, 0, 30, 10) - 0.5).abs() < 0.01, "depth {depth}: {}", chan(&s, 0, 30, 10));
         // Adjustments apply to the channel (also where it was untouched).
         s.execute("image.adjustments.invert", json!({})).unwrap();
         assert!((chan(&s, 0, 30, 10) - 0.5).abs() < 0.01);
@@ -332,17 +337,18 @@ fn apply_image_hand_computed() {
     let mut s = session();
     // Target: 50% gray. Source: a second document, red #ff0000 / 50% gray.
     s.execute("edit.fill", json!({"color": "#808080"})).unwrap();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20}));
+    s.execute("file.new", json!({"width": 40, "height": 20})).unwrap();
     s.execute("edit.fill", json!({"color": "#ff4000"})).unwrap();
     s.set_active(0);
-    let g = 128.0 / 255.0;
+    // Blending works on the (linear) document values.
+    let (g, q) = (lin(128.0), lin(64.0));
     s.execute("image.applyImage", json!({"source": {"document": 1}, "blending": "multiply"})).unwrap();
     let p = px(&s, 3, 3);
-    assert!((p[0] - g).abs() < 0.003 && (p[1] - g * 64.0 / 255.0).abs() < 0.003 && p[2].abs() < 0.003, "{p:?}");
+    assert!((p[0] - g).abs() < 0.003 && (p[1] - g * q).abs() < 0.003 && p[2].abs() < 0.003, "{p:?}");
     s.undo();
     // Single source channel applied to every target channel, screen at 50% opacity, inverted.
     s.execute("image.applyImage", json!({"source": {"document": 1, "channel": "green", "invert": true}, "blending": "screen", "opacity": 50})).unwrap();
-    let top = 1.0 - 64.0 / 255.0;
+    let top = 1.0 - q;
     let screen = 1.0 - (1.0 - g) * (1.0 - top);
     let want = g + (screen - g) * 0.5;
     let p = px(&s, 3, 3);
@@ -358,7 +364,7 @@ fn apply_image_hand_computed() {
     assert!((px(&s, 3, 3)[1] - want).abs() < 0.003);
     assert!((px(&s, 30, 3)[1] - g).abs() < 0.003, "outside the selection");
     // Size mismatch is refused.
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 5, "height": 5}));
+    s.execute("file.new", json!({"width": 5, "height": 5})).unwrap();
     s.set_active(0);
     assert!(s.execute("image.applyImage", json!({"source": {"document": 2}})).is_err());
     assert!(s.execute("image.applyImage", json!({"blending": "hue"})).is_err());
@@ -369,7 +375,7 @@ fn apply_image_onto_transparent_layer() {
     for depth in [8, 16, 32] {
         let mut s = session_depth(depth);
         s.execute("edit.fill", json!({"color": "#c08040"})).unwrap();
-        let (r, g, b) = (192.0 / 255.0, 128.0 / 255.0, 64.0 / 255.0);
+        let (r, g, b) = (lin(192.0), lin(128.0), lin(64.0));
         // An empty layer has no pixels to blend with: it takes the source, whatever the mode.
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("image.applyImage", json!({"blending": "multiply"})).unwrap();
@@ -445,7 +451,7 @@ fn split_and_merge_channels() {
     assert_eq!(names, ["Untitled_R", "Untitled_G", "Untitled_B", "Untitled_A"]);
     let v = |s: &Session, i: usize| s.documents()[i].doc.layers[0].surface().unwrap().pixel(1, 1)[0];
     assert_eq!(v(&s, 0), 1.0);
-    assert!((v(&s, 1) - 128.0 / 255.0).abs() < 0.003);
+    assert!((v(&s, 1) - lin(128.0)).abs() < 0.003);
     assert_eq!(v(&s, 2), 0.0);
     // Merge the three colour docs back (order: active first, then the rest).
     s.set_active(0);
@@ -453,7 +459,7 @@ fn split_and_merge_channels() {
     assert_eq!(s.documents().len(), 2);
     assert_eq!(r["document"], 1);
     let p = px(&s, 1, 1);
-    assert!((p[0] - 1.0).abs() < 0.003 && (p[1] - 128.0 / 255.0).abs() < 0.003 && p[2].abs() < 0.003, "{p:?}");
+    assert!((p[0] - 1.0).abs() < 0.003 && (p[1] - lin(128.0)).abs() < 0.003 && p[2].abs() < 0.003, "{p:?}");
     assert!(s.execute("channel.merge", json!({"mode": "cmyk"})).is_err());
 }
 
@@ -462,12 +468,12 @@ fn duplicate_to_other_document() {
     let mut s = session();
     rect(&mut s, 0, 0, 5, 5, "replace");
     s.execute("select.saveSelection", json!({"name": "S"})).unwrap();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20, "depth": 16}));
+    s.execute("file.new", json!({"width": 40, "height": 20, "depth": 32})).unwrap();
     s.set_active(0);
     s.execute("channel.duplicate", json!({"channel": "S", "document": 1, "name": "S2"})).unwrap();
     let d1 = &s.documents()[1].doc;
     assert_eq!(d1.channels[0].name, "S2");
-    assert_eq!(d1.channels[0].surface.format().sample, SampleType::U16);
+    assert_eq!(d1.channels[0].surface.format().sample, SampleType::F32);
     assert_eq!(d1.channels[0].surface.sample_channel(2, 2, 0), 1.0);
     let r = s.execute("channel.duplicate", json!({"channel": 0, "document": "new"})).unwrap();
     assert_eq!(s.documents()[r["document"].as_u64().unwrap() as usize].doc.mode, ColorMode::Grayscale);
@@ -480,10 +486,10 @@ fn image_size_and_rotate_carry_channels_and_quick_mask() {
     s.execute("select.saveSelection", json!({})).unwrap();
     s.execute("select.editInQuickMaskMode", json!({})).unwrap();
     s.execute("image.imageRotation.180", json!({})).unwrap();
-    s.execute("image.mode.bits16", json!({})).unwrap();
+    s.execute("image.mode.bits32", json!({})).unwrap();
     let d = doc(&s);
-    assert_eq!(d.channels[0].surface.format().sample, SampleType::U16);
-    assert_eq!(d.quick_mask.as_ref().unwrap().surface.format().sample, SampleType::U16);
+    assert_eq!(d.channels[0].surface.format().sample, SampleType::F32);
+    assert_eq!(d.quick_mask.as_ref().unwrap().surface.format().sample, SampleType::F32);
 }
 
 #[test]

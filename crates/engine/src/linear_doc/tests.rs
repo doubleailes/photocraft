@@ -165,11 +165,17 @@ fn picked_colours_paint_as_picked_and_the_eyedropper_reads_them_back() {
 }
 
 #[test]
-fn legacy_integer_documents_take_colours_as_they_are() {
+fn integer_documents_are_converted_as_they_enter_a_session() {
     let mut s = Session::new();
-    s.add_document(Document::with_background("u8", Size::new(4, 4), ColorMode::Rgb, SampleType::U8, Color::WHITE), None);
-    assert_eq!(s.to_doc_color([0.5, 0.25, 0.75, 1.0]), [0.5, 0.25, 0.75, 1.0]);
-    assert_eq!(s.from_doc_color([0.5, 0.25, 0.75, 1.0]), [0.5, 0.25, 0.75, 1.0]);
+    s.add_document(Document::with_background("u8", Size::new(4, 4), ColorMode::Rgb, SampleType::U8, Color::rgb(0.5, 0.5, 0.5)), None);
+    let d = &s.active().unwrap().doc;
+    assert_eq!(d.depth, SampleType::F16);
+    assert!(is_linear(d));
+    // 0.5 stored as 8-bit level 128.
+    assert!(near(px(&s, 1, 1)[0], srgb_decode(128.0 / 255.0), 1e-3), "{:?}", px(&s, 1, 1));
+    // Picked colours convert into it like into any document.
+    assert!(near(s.to_doc_color([0.5, 0.5, 0.5, 1.0])[0], srgb_decode(0.5), 1e-3));
+    assert!(near(s.from_doc_color([srgb_decode(0.5), 0.0, 0.0, 1.0])[0], 0.5, 1e-3));
 }
 
 #[test]
@@ -221,10 +227,10 @@ fn copying_from_a_linear_document_gives_other_apps_srgb_and_pastes_convert() {
     s.execute("edit.copy", json!({})).unwrap();
     let (_, px8) = s.clipboard_rgba8().unwrap();
     assert!(px8.iter().all(|p| p[0].abs_diff(128) <= 1), "{:?}", px8[0]);
-    // Pasted into a legacy sRGB document, the grey is still #808080.
-    s.add_document(Document::with_background("u8", Size::new(4, 4), ColorMode::Rgb, SampleType::U8, Color::WHITE), None);
+    // Pasted into a 32-bit document, the grey is the same linear value.
+    s.execute("file.new", json!({"width": 4, "height": 4, "depth": 32})).unwrap();
     s.execute("edit.paste", json!({})).unwrap();
-    assert!(near(px(&s, 1, 1)[0], 128.0 / 255.0, 1.0 / 255.0), "{:?}", px(&s, 1, 1));
+    assert!(near(px(&s, 1, 1)[0], srgb_decode(128.0 / 255.0), 1e-3), "{:?}", px(&s, 1, 1));
 }
 
 #[test]

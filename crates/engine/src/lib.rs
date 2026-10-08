@@ -284,6 +284,9 @@ pub struct Session {
     pub quick_mask_options: channel_cmds::QuickMaskOptions,
     /// Colour channel the running command may change (a single colour channel is targeted).
     color_restrict: Option<usize>,
+    /// The running command edits a layer mask or a channel: picked colours go in as data (50%
+    /// gray is 0.5 coverage), not converted to linear like colours entering pixels.
+    pub(crate) data_target: bool,
     /// Edit › Preferences, keyboard shortcuts, menu and toolbar customisation (see `prefs`).
     pub prefs: prefs::PrefsStore,
     /// Edit menu state: Fade source, custom shape library (see `edit_menu_cmds`).
@@ -365,6 +368,12 @@ impl Session {
         // Persisted IDs can overlap the allocator, so check every replacement too.
         while self.docs.iter().any(|st| st.doc.id == doc.id) {
             doc.id = photocraft_doc::DocId::fresh();
+        }
+        // Sessions hold linear float documents only (`linear_doc`): an integer document (a file
+        // read without `open_document`, a scratch copy) is converted here. Should the conversion
+        // fail, the document stays as it is: still a valid document, just not linear.
+        if !doc.depth.is_float() {
+            let _ = linear_doc::linearize(&mut doc);
         }
         let mut st = DocState::new(doc, path);
         st.history.max_states = self.prefs.get().performance.history_states.max(1) as usize;

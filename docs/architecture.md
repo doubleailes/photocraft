@@ -245,7 +245,7 @@ impl Viewport {
 ```rust
 pub struct Document {
     pub id: DocId, pub size: Size, pub resolution_dpi: f32,
-    pub mode: ColorMode /* Rgb | Gray */, pub depth: Depth /* F16 | F32 (U8 | U16 until half-float step 3b) */,
+    pub mode: ColorMode /* Rgb | Gray */, pub depth: Depth /* F16 | F32 in a session; U8 | U16 only for files as read */,
     pub profile: IccProfileRef,
     pub root: LayerGroup,            // tree
     pub channels: Vec<AlphaChannel>, // saved selections/spot

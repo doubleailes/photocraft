@@ -149,7 +149,7 @@ mod tests {
 
     fn session() -> Session {
         let mut s = Session::new();
-        crate::linear_doc::legacy_new(&mut s, &json!({"width": 20, "height": 10}));
+        s.execute("file.new", json!({"width": 20, "height": 10})).unwrap();
         s
     }
 
@@ -204,7 +204,9 @@ mod tests {
         assert!(px(&s, 0, 5)[0] > 0.95);
         s.execute("select.rect", json!({"x": 0, "y": 0, "width": 5, "height": 10})).unwrap();
         s.execute("paint.gradient", json!({"from": [0, 0], "to": [0, 10], "colors": ["#ff0000"]})).unwrap();
-        assert_eq!(px(&s, 2, 5)[..3], [1.0, 0.0, 0.0]);
+        // Red within the gradient's dither.
+        let red = px(&s, 2, 5);
+        assert!((red[0] - 1.0).abs() < 0.005 && red[1].abs() < 0.005 && red[2].abs() < 0.005, "{red:?}");
         assert!(px(&s, 10, 5)[1] > 0.4, "outside the selection untouched");
         assert!(s.execute("paint.gradient", json!({"from": [0, 0]})).is_err());
     }

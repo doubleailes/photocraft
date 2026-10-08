@@ -646,12 +646,13 @@ mod tests {
 
     #[test]
     fn destructive_levels_dont_clip_in_32_bit() {
-        // Input 15..230, gamma 1.3, output 10..245: black and white land on the output range in
-        // integer documents, but in a 32-bit document the curve runs on past it (then 0..1).
+        // Input 15..230, gamma 1.3, output 10..245: Photoshop's integer Levels would land black
+        // and white on the output range, but in a float document the curve runs on past it
+        // (then 0..1). Documents are float, half or 32-bit.
         let params = json!({"inBlack": 15, "inWhite": 230, "gamma": 1.3, "outBlack": 10, "outWhite": 245});
-        for (depth, low, high) in [(8, 10.0, 245.0), (16, 10.0, 245.0), (32, 0.0, 255.0)] {
+        for (depth, low, high) in [(16, 0.0, 255.0), (32, 0.0, 255.0)] {
             let mut s = crate::Session::new();
-            crate::linear_doc::legacy_new(&mut s, &json!({"width": 16, "height": 16, "depth": depth, "background": "white"}));
+            s.execute("file.new", json!({"width": 16, "height": 16, "depth": depth, "background": "white"})).unwrap();
             s.execute("select.rect", json!({"x": 0, "y": 0, "width": 8, "height": 16})).unwrap();
             s.execute("edit.fill", json!({"color": "#000000"})).unwrap();
             s.execute("select.deselect", json!({})).unwrap();
