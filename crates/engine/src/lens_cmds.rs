@@ -160,11 +160,14 @@ fn rgba_region(surf: &Surface, area: Rect) -> Vec<[f32; 4]> {
 
 /// Linear RGBA → sRGB-encoded, in place (alpha untouched): what Camera Raw develops.
 pub fn encode_srgb(px: &mut [[f32; 4]]) {
-    px.iter_mut().for_each(|q| (0..3).for_each(|c| q[c] = photocraft_color::convert::linear_to_srgb(q[c])));
+    // White stays exactly 1 (the curve's arithmetic lands a hair below), so clipping counts hold.
+    let enc = |v: f32| if v == 1.0 { 1.0 } else { photocraft_color::convert::linear_to_srgb(v) };
+    px.iter_mut().for_each(|q| (0..3).for_each(|c| q[c] = enc(q[c])));
 }
 
-/// Camera Raw on a surface over `area` (RGB / Gray via RGBA, at the surface's depth).
-pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw) -> Surface {
+/// Camera Raw on a surface over `area` (RGB / Gray via RGBA, at the surface's depth). `linear`:
+/// the values are linear light (a linear document), encoded around the develop.
+pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw, linear: bool) -> Surface {
     let area = area.intersect(&surf.content_bounds().union(&area));
     if area.is_empty() || p.is_identity() {
         return surf.clone();
@@ -172,13 +175,12 @@ pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw) -> Surface 
     let fmt = surf.format();
     let (w, h) = (area.width() as usize, area.height() as usize);
     let mut px = rgba_region(surf, area);
-    // The develop pipeline works on sRGB-encoded values; float documents are linear, so they
-    // are encoded around it (overrange values survive both ways).
-    let linear = fmt.sample.is_float();
+    // The develop pipeline works on sRGB-encoded values: linear ones are encoded around it
+    // (overrange values survive both ways).
     if linear {
         encode_srgb(&mut px);
     }
-    camera_raw::develop(&mut px, w, h, p, linear);
+    camera_raw::develop(&mut px, w, h, p, fmt.sample.is_float());
     if linear {
         px.iter_mut().for_each(|q| (0..3).for_each(|c| q[c] = photocraft_color::convert::srgb_to_linear(q[c])));
     }
@@ -237,7 +239,8 @@ pub fn apply_to_surface(id: &str, params: &Value, surf: &Surface, canvas: Rect) 
     match id {
         LENS => Some(lens::correct(surf, canvas, &lens_params(id, params, canvas, None).ok()?)),
         WIDE => Some(wideangle::apply(surf, canvas, &wide_params(id, params, None).ok()?, Interp::Bicubic)),
-        RAW => Some(camera_raw_surface(surf, canvas, &raw_params(id, params).ok()?)),
+        // Smart filters re-render without their document: float pixels are linear by convention.
+        RAW => Some(camera_raw_surface(surf, canvas, &raw_params(id, params).ok()?, surf.format().sample.is_float())),
         _ => None,
     }
 }
@@ -373,7 +376,9 @@ fn camera_raw_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     // New settings are strict; stored Smart Filters re-apply through the lenient `raw_params`.
     cr.validate().map_err(|e| bad(RAW, e))?;
     let t0 = Stopwatch::start();
-    let id = run_filter(s, RAW, "Camera Raw Filter", p.clone(), false, &|surf, canvas| camera_raw_surface(surf, canvas.union(&surf.content_bounds()), &cr))?;
+    let linear = s.active().is_some_and(|d| crate::linear_doc::is_linear(&d.doc));
+    let id =
+        run_filter(s, RAW, "Camera Raw Filter", p.clone(), false, &|surf, canvas| camera_raw_surface(surf, canvas.union(&surf.content_bounds()), &cr, linear))?;
     Ok(json!({"layer": id.0, "identity": cr.is_identity(), "ms": t0.ms()}))
 }
 

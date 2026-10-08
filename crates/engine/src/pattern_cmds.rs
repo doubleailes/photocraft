@@ -497,6 +497,9 @@ mod tests {
         assert!(s.execute("pattern.import", json!({"path": "/nonexistent.pat"})).is_err());
     }
 
+    /// The library's 0.8 grey (sRGB-encoded) in a linear document.
+    const LIN_08: f32 = 0.6038;
+
     #[test]
     fn pattern_fill_layer_renders_at_every_depth_and_undoes() {
         for depth in [8u64, 16, 32] {
@@ -506,9 +509,10 @@ mod tests {
             let st = s.active().unwrap();
             assert_eq!(st.doc.patterns.len(), 1, "copied into the document");
             assert!(matches!(&st.doc.layer(id).unwrap().content, LayerContent::Fill(Fill::Pattern { .. })));
-            // Checkerboard: 8 px squares of 0.8 and 1.0 grey from the canvas origin.
+            // Checkerboard: 8 px squares of 0.8 and 1.0 grey from the canvas origin, linear in
+            // the (linear) document.
             let (a, b) = (pixel(&s, 1, 1), pixel(&s, 9, 1));
-            assert!((a[0] - 0.8).abs() < 0.01 && (b[0] - 1.0).abs() < 0.01, "{depth}: {a:?} {b:?}");
+            assert!((a[0] - LIN_08).abs() < 0.01 && (b[0] - 1.0).abs() < 0.01, "{depth}: {a:?} {b:?}");
             s.undo();
             assert!(s.active().unwrap().doc.patterns.is_empty());
             assert!(s.execute("layer.newFillLayer.pattern", json!({"pattern": "nope"})).is_err());
@@ -551,7 +555,7 @@ mod tests {
         let st = s.active().unwrap();
         assert_eq!(st.doc.patterns.len(), 1);
         let p = pixel(&s, 1, 1);
-        assert!((p[0] - 0.8).abs() < 0.01 && (p[2] - 0.8).abs() < 0.01, "{p:?}");
+        assert!((p[0] - LIN_08).abs() < 0.01 && (p[2] - LIN_08).abs() < 0.01, "{p:?}");
         assert!(s.execute("layer.layerStyle.patternOverlay", json!({"pattern": "missing"})).is_err());
         s.execute("layer.layerStyle.stroke", json!({"size": 4, "color": "#ffffff", "add": true})).unwrap();
         let st = s.active().unwrap();

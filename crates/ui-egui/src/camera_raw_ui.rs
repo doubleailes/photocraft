@@ -249,10 +249,11 @@ fn open_pixels(
             proxy[py * pw + x] = [a[0] / a[4], a[1] / a[4], a[2] / a[4], a[3] / a[4]];
         }
     }
-    // Float (linear) documents develop sRGB-encoded, as the engine does (`camera_raw_surface`):
-    // the proxy, its preview and its histograms hold encoded values.
+    // Linear documents develop sRGB-encoded, as the engine does (`camera_raw_surface`): the
+    // proxy, its preview and its histograms hold encoded values.
     let float = surf.format().sample.is_float();
-    if float {
+    let encoded = photocraft_engine::linear_doc::is_linear(&st.doc);
+    if encoded {
         photocraft_engine::lens_cmds::encode_srgb(&mut proxy);
     }
     // Coverage at the centre of each proxy block.
@@ -268,7 +269,7 @@ fn open_pixels(
         Coverage::None => None,
     };
     let source =
-        if float { std::sync::Arc::new(photocraft_cms::Builtin::Srgb.profile().clone()) } else { photocraft_engine::color_cmds::composite_profile(&st.doc) };
+        if encoded { std::sync::Arc::new(photocraft_cms::Builtin::Srgb.profile().clone()) } else { photocraft_engine::color_cmds::composite_profile(&st.doc) };
     let lab_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::LabD50.profile(), Default::default()).map_err(|e| e.to_string())?;
     let scope_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::Srgb.profile(), Default::default()).map_err(|e| e.to_string())?;
     if let Some(saved) = app.session.prefs().dialogs.get("filter.cameraRaw.scope")
@@ -315,7 +316,8 @@ fn open_pixels(
                 Coverage::Mask(mask) => super::camera_raw_detail_ui::Coverage::Mask(mask),
                 Coverage::None => super::camera_raw_detail_ui::Coverage::None,
             },
-        ),
+        )
+        .linear(encoded),
         viewport: None,
         float,
         tex: None,
@@ -829,7 +831,8 @@ mod tests {
         menu(&mut app, &ctx, "filter.cameraRaw", &json!({"ui": {"cancel": true}})).unwrap().unwrap();
         assert_eq!(app.session.active().unwrap().history.past_len(), steps);
         let pixel = app.session.active().unwrap().doc.layer(app.session.active().unwrap().active_layer.unwrap()).unwrap().surface().unwrap().rgba(0, 0);
-        assert!((pixel[0] - 128.0 / 255.0).abs() < 0.0001);
+        // #808080 in the linear document, untouched by the cancelled dialog.
+        assert!((pixel[0] - 0.21586).abs() < 1e-3, "{pixel:?}");
     }
 
     #[test]
