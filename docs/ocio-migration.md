@@ -128,29 +128,48 @@ files are ignored), CMYK/Lab file export and the `channel.merge` CMYK/Lab target
 
 Benchmark: `crates/ui-egui/examples/large_image_bench.rs`, release, `--cpu` (no GPU on the
 measuring machine: 4 cores, 15 GB RAM, Linux). Before = `24c04a5` (last commit before any half-float
-code), after = `138a80a`. Synthetic 8-bit RGB photo, 24 MP (6000×4000) and 36 MP (7360×4912), one
-operation per process. Times are the bench's own single-run figures, so treat differences under
-about 10% as noise. Peak RSS is the kernel's high-water mark (`VmHWM`) for that process.
+code), after = `138a80a` (steps 1–3b), fixed = the open-path work below. Synthetic 8-bit RGB photo,
+24 MP (6000×4000) and 36 MP (7360×4912), one operation per process. Times are the bench's own
+single-run figures, so treat differences under about 10% as noise. Peak RSS is the kernel's
+high-water mark (`VmHWM`) for that process.
 
-| Scenario | 24 MP before | 24 MP after | 36 MP before | 36 MP after |
-|---|---|---|---|---|
-| Open (decode + document) | 0.52 s | **5.2–5.5 s** | 0.73 s | **8.1–8.4 s** |
-| First refresh (CPU) | 234–251 ms | 233–266 ms | 313–335 ms | 356–411 ms |
-| Full refresh (3 runs) | 210–255 ms | 228–259 ms | 317–345 ms | 388–427 ms |
-| Gaussian Blur r 10 | 458 ms | 672 ms | 688 ms | 1126 ms |
-| Brush, 40 dabs (size 120) | 12–13 ms | 15–19 ms | 12–16 ms | 15–20 ms |
-| Peak RSS, open / refresh | 482–492 MB | **1267 MB** | 721–729 MB | **1902 MB** |
-| Peak RSS, filter | 707 MB | 1267 MB | 971 MB | 1902 MB |
+| Scenario | 24 MP before | after | fixed | 36 MP before | after | fixed |
+|---|---|---|---|---|---|---|
+| Open (decode + document) | 0.52 s | 5.2–5.5 s | **0.82–1.07 s** | 0.73 s | 8.1–8.4 s | **1.36–1.46 s** |
+| First refresh (CPU) | 234–251 ms | 233–266 ms | 255–276 ms | 313–335 ms | 356–411 ms | 375–407 ms |
+| Full refresh (3 runs) | 210–255 ms | 228–259 ms | 265–267 ms | 317–345 ms | 388–427 ms | 395–433 ms |
+| Gaussian Blur r 10 | 458 ms | 672 ms | 732 ms | 688 ms | 1126 ms | 1102 ms |
+| Brush, 40 dabs (size 120) | 12–13 ms | 15–19 ms | 16–18 ms | 12–16 ms | 15–20 ms | 16–19 ms |
+| Peak RSS, open / refresh | 482–492 MB | 1267 MB | **582–584 MB** | 721–729 MB | 1902 MB | **1012 MB** |
+| Peak RSS, filter | 707 MB | 1267 MB | 889 MB | 971 MB | 1902 MB | 1405 MB |
 
-* **Open is about 10× slower.** The integer→linear conversion (`linear_doc::to_linear`) runs a
-  full-surface f32 colour transform on the open thread, and clones the document twice
-  (`work`, `snapshot`). Not profiled yet; suspects are the transform and those clones.
-* **Memory is about 2.6× higher.** Half float is 2× the bytes of RGBA8. The rest is probably the
-  transient clones during open, and it stays high afterwards. Not profiled yet.
-* **Interactive paths hold up:** refresh is within about 10–20%, and a brush dab stays in the
-  tens of ms at 36 MP. Filters are the slowest hit (+47% at 24 MP, +64% at 36 MP).
-* Open follow-up: make `to_linear` tile-parallel, skip the document clones, and convert in the
-  storage precision that is needed. Re-run this table after.
+What made open slow, and the fixes:
+
+* **Serial depth conversion.** `Surface::convert` walked the tiles one by one and allocated a
+  `Vec` per pixel; the f32 widen and the f16 narrow both went through it. It now converts tiles in
+  parallel and a same-model conversion allocates nothing per pixel (5.4 s → 3.2 s at 24 MP).
+* **Full-size float copies.** `to_linear` cloned the document twice, and the widen, the colour
+  transform's staging buffer and its output were three full-size f32 copies alive at once (the
+  1.3 GB peak). `to_linear` now works in place, and `linearize_surface` takes each tile source →
+  f32 → transform → f16 on its own through `Surface::map_tiles_into` (3.2 s → 1.5 s; peak RSS
+  1342 → 590 MB).
+* **Exact pipeline per pixel.** The precise float path evaluated the TRC (`powf`) for every pixel.
+  8-bit sources now use `Transform::convert_u8_to_f32`, which reads the input curves from the
+  256-entry tables already computed exactly, when the transform is curves plus a matrix with no
+  output curves (a profile to its linear version); it matches the exact path to 1e-5, far below
+  f16 precision (1.5 s → 0.8 s).
+
+Where this leaves step 4:
+
+* **Memory is what half float costs.** RGBA f16 is 2× the bytes of RGBA8: the open/refresh peak is
+  1.2× before at 24 MP and 1.4× at 36 MP, not 2.6×.
+* **Open is 1.6–2× before.** What remains is the f16 encode and the transform itself, about
+  0.3 s at 24 MP on 4 cores (the JPEG decode is unchanged, about 0.5 s). 16-bit sources still go
+  through the exact pipeline per pixel (not measured here); a 65 536-entry table would do for them
+  what `curves8` does for 8-bit.
+* **Interactive paths are unchanged by the fix and hold up:** refresh within about 10–20% of
+  before, a brush dab in the tens of ms at 36 MP. Filters are the slowest hit (+60% at both
+  sizes), since they now work on 2× the bytes.
 
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**
