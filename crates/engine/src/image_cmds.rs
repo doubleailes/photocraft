@@ -342,7 +342,9 @@ fn convert_depth(s: &mut Session, depth: SampleType) -> Result<Value> {
         return Ok(Value::Null);
     }
     s.edit("Bit Depth", |doc, _| {
-        crate::linear_doc::to_linear(doc)?;
+        // Float documents hold linear values whatever profile they carry (a 32-bit file keeps
+        // its tag): only an integer one is converted, never a float one a second time.
+        crate::linear_doc::linearize(doc)?;
         if doc.depth != depth {
             crate::linear_doc::set_document_depth(doc, depth);
         }
@@ -597,6 +599,20 @@ mod tests {
         assert_eq!(doc(&s).depth, SampleType::F16);
         // There are no integer document depths.
         assert!(s.execute("image.mode.bits8", json!({})).is_err());
+    }
+
+    #[test]
+    fn depth_changes_keep_the_values_of_float_files_tagged_srgb() {
+        // A 32-bit file tagged sRGB holds linear values (Photoshop embeds the working profile).
+        let mut d = Document::with_background("f", Size::new(4, 4), ColorMode::Rgb, SampleType::F32, photocraft_doc::Color::rgb(0.5, 0.5, 0.5));
+        d.icc_profile = Some(photocraft_cms::Builtin::Srgb.profile().to_bytes());
+        let mut s = Session::new();
+        s.add_document(d, None);
+        let v = |s: &Session| s.active().unwrap().doc.layers[0].surface().unwrap().pixel(1, 1)[0];
+        for to in ["image.mode.bits16", "image.mode.bits32", "image.mode.bits16"] {
+            s.execute(to, json!({})).unwrap();
+            assert!((v(&s) - 0.5).abs() < 1e-3, "{to}: {}", v(&s));
+        }
     }
 
     #[test]

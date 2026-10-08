@@ -665,6 +665,9 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
                     if matches!(native, crate::native::Native::Lab) && depth == SampleType::U16 {
                         crate::pixels::lab16_chroma(&mut bytes, cc + 1, true);
                     }
+                    if alpha_idx.is_some() {
+                        native.unmatte(&mut bytes, depth);
+                    }
                     let mut out = Surface::new(fmt);
                     out.write_region(canvas, &native.to_rgb(&bytes, depth, true));
                     out
@@ -672,8 +675,8 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
                 None => Surface::from_interleaved(fmt, canvas, &bytes),
             };
             let dc = fmt.mode.color_channels();
-            if alpha_idx.is_some() {
-                // Undo Photoshop's white matting of the merged image.
+            if alpha_idx.is_some() && cx.native.is_none() {
+                // Undo Photoshop's white matting of the merged image (other models: above).
                 // A band of tile rows at a time (no full-size float copy of the image).
                 let white = photocraft_raster::from_rgba(&fmt, [1.0, 1.0, 1.0, 1.0]);
                 let mut vals = Vec::new();

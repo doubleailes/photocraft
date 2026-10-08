@@ -315,6 +315,35 @@ fn smart_filters_survive_psd_in_rgb_and_grayscale() {
     }
 }
 
+/// An 8-bit file placed in a (linear float) document renders linearised; the unfiltered pixels
+/// PSD export writes for its smart filters are those linear values too, not the file's encoded ones.
+#[test]
+fn placed_integer_source_writes_linear_unfiltered_pixels() {
+    let dir = std::env::temp_dir().join(format!("pc-smart-int-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let img = photocraft_codecs::Image::from_u8(16, 16, photocraft_codecs::ChannelLayout::Rgb, vec![128; 16 * 16 * 3]).unwrap();
+    let path = dir.join("grey.png");
+    std::fs::write(&path, photocraft_codecs::encode(&img, photocraft_codecs::Format::Png, &Default::default()).unwrap()).unwrap();
+    let mut s = Session::new();
+    s.execute("file.new", json!({"width": 32, "height": 32})).unwrap();
+    s.execute("file.placeEmbedded", json!({"path": path.to_string_lossy(), "fit": false, "center": [16, 16]})).unwrap();
+    s.execute("filter.blur.gaussianBlur", json!({"radius": 1.0})).unwrap();
+    let doc = s.active().unwrap().doc.clone();
+    let out = photocraft_io::export(&doc, "psd", &Default::default()).unwrap();
+    let f = photocraft_psd::PsdFile::from_bytes(&out.bytes).unwrap();
+    let fx = f.global_blocks.iter().find(|g| &g.key == b"FEid").map(|g| photocraft_psd::filter_effects::FilterEffects::parse(&g.data).unwrap()).unwrap();
+    let item = &fx.items[0];
+    let (w, h) = item.rect.size().unwrap();
+    assert_eq!(item.depth, 32, "a half-float document saves 32-bit float");
+    let first = item.slots[0].as_ref().unwrap().decode(w, h, 32).unwrap();
+    let (x, y) = (16 - item.rect.left, 16 - item.rect.top);
+    let at = (y as usize * w + x as usize) * 4;
+    let stored = f32::from_be_bytes([first[at], first[at + 1], first[at + 2], first[at + 3]]);
+    let linear = photocraft_color::convert::srgb_to_linear(128.0 / 255.0);
+    assert!((stored - linear).abs() < 0.01, "slot 0 holds {stored}, expected the linear {linear}");
+    let _ = std::fs::remove_dir_all(dir);
+}
+
 /// Writes sample files for checking in Photoshop (`PHOTOCRAFT_SMART_PSD_OUT`): per depth, a
 /// plain layer, a smart object without filters, and one with filters.
 #[test]

@@ -149,13 +149,55 @@ pub fn write_sample(bytes: &mut [u8], sample: SampleType, index: usize, v: f32) 
     }
 }
 
-/// A colour value in the document's model with alpha, as normalised floats.
+/// A colour value in the document's model with alpha, as normalised floats. Colours saved by
+/// earlier builds in a removed model (CMYK, Lab, Indexed, …) read back as RGB or gray.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(from = "SavedColor")]
 pub struct Color {
     pub mode: ColorMode,
     /// Up to 4 colour components (unused ones are 0) followed by nothing; alpha kept separately.
     pub c: [f32; 4],
     pub alpha: f32,
+}
+
+/// Colour models of earlier builds, as saved documents and settings may still hold them.
+#[derive(Deserialize)]
+enum SavedMode {
+    Bitmap,
+    Grayscale,
+    Indexed,
+    Rgb,
+    Cmyk,
+    Lab,
+    Multichannel,
+    Duotone,
+}
+
+/// A saved [`Color`], read in any model it was written in.
+#[derive(Deserialize)]
+struct SavedColor {
+    mode: SavedMode,
+    c: [f32; 4],
+    alpha: f32,
+}
+
+impl From<SavedColor> for Color {
+    fn from(s: SavedColor) -> Color {
+        let [a, b, c, d] = s.c;
+        let (mode, c) = match s.mode {
+            SavedMode::Rgb | SavedMode::Indexed | SavedMode::Multichannel => (ColorMode::Rgb, [a, b, c, 0.0]),
+            SavedMode::Grayscale | SavedMode::Bitmap | SavedMode::Duotone => (ColorMode::Grayscale, [a, 0.0, 0.0, 0.0]),
+            SavedMode::Cmyk => {
+                let [r, g, b] = convert::cmyk_to_rgb([a, b, c, d]);
+                (ColorMode::Rgb, [r, g, b, 0.0])
+            }
+            SavedMode::Lab => {
+                let [r, g, b] = convert::lab_to_srgb([a * 100.0, b * 255.0 - 128.0, c * 255.0 - 128.0]);
+                (ColorMode::Rgb, [r, g, b, 0.0])
+            }
+        };
+        Color { mode, c, alpha: s.alpha }
+    }
 }
 
 impl Color {

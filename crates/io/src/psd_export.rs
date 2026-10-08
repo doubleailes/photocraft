@@ -183,6 +183,20 @@ impl SmartOut {
 }
 
 /// Size and resolution of a smart-object source file (PSD/PSB header, `.pcraft`, or any image).
+/// The transform that brings an integer smart-object source's composite (encoded in its own
+/// profile) into a float host's linear values, as the engine renders it (`linear_doc`); `None`
+/// when no conversion applies (an integer host, a float source).
+fn linear_source_transform(src: &Document, host: PixelFormat) -> Option<photocraft_cms::Transform> {
+    use photocraft_cms::{Builtin, ColorSpace, Intent, Profile};
+    if !host.sample.is_float() || src.depth.is_float() {
+        return None;
+    }
+    // Gray composites come out as equal RGB channels; sGray has the sRGB curve.
+    let embedded = src.icc_profile.as_ref().and_then(|b| Profile::parse(b).ok()).filter(|p| p.color_space == ColorSpace::Rgb && src.mode == ColorMode::Rgb);
+    let from = embedded.as_ref().unwrap_or_else(|| Builtin::Srgb.profile());
+    photocraft_cms::Transform::new(from, Builtin::LinearSrgb.profile(), Intent::RelativeColorimetric, false).ok()
+}
+
 fn source_geometry(name: &str, bytes: &[u8]) -> Result<((f64, f64), f64), String> {
     if crate::is_psd(bytes) {
         let rd = |at: usize| bytes.get(at..at + 4).map(|b| f64::from(u32::from_be_bytes([b[0], b[1], b[2], b[3]])));
@@ -669,10 +683,21 @@ impl Ex {
         let c = doc.map(|d| {
             let mut s = Surface::new(self.fmt);
             let fmt = self.fmt;
+            let to_linear = linear_source_transform(&d, fmt);
             let _ = photocraft_compose::render_bands(&d, d.bounds(), 0, |band| -> Result<(), ()> {
                 let mut vals = Vec::with_capacity(band.px.len() * fmt.channels());
                 let mut v = [0.0f32; 5];
-                for p in &band.px {
+                let lin;
+                let px: &[[f32; 4]] = match &to_linear {
+                    Some(t) => {
+                        let mut out = vec![[0.0f32; 4]; band.px.len()];
+                        t.convert_f32(band.px.as_flattened(), 4, out.as_flattened_mut(), 4, true);
+                        lin = out;
+                        &lin
+                    }
+                    None => &band.px,
+                };
+                for p in px {
                     let n = photocraft_raster::from_rgba_into(&fmt, *p, &mut v);
                     vals.extend_from_slice(&v[..n]);
                 }
