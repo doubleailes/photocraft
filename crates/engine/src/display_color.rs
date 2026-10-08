@@ -13,8 +13,13 @@
 //! * When the source and the monitor match (sRGB documents on an sRGB display, the common
 //!   case) the transform is the identity and nothing is applied on either path.
 //!
-//! Results are cached per (document profile, mode, monitor profile); the rendering intent is
-//! relative colorimetric with black point compensation, as for Photoshop's monitor display.
+//! * The viewer (`crate::viewer`): with OCIO on, the linear composite goes through the baked
+//!   OCIO display/view ([`CanvasDisplay::viewer`]) instead of the monitor transform. Exposure
+//!   (scene-linear gain) and gamma (on display values) apply either way.
+//!
+//! Results are cached per (document profile, mode, monitor profile, viewer); the rendering
+//! intent is relative colorimetric with black point compensation, as for Photoshop's monitor
+//! display.
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -43,10 +48,19 @@ pub struct CanvasDisplay {
     pub source: Arc<Profile>,
     /// The monitor profile.
     pub monitor: Arc<Profile>,
-    /// Texture values → monitor; `None` when that is the identity (within half an 8-bit step).
+    /// Texture values → monitor; `None` when that is the identity (within half an 8-bit step)
+    /// or when the OCIO viewer replaces it.
     pub transform: Option<Arc<Transform>>,
+    /// The OCIO viewer (linear composite → display values), when on and the composite is linear.
+    pub viewer: Option<Arc<photocraft_ocio::ViewerLut>>,
+    /// Viewer exposure as a linear gain, and 1 / gamma.
+    pub gain: f32,
+    pub inv_gamma: f32,
     /// Changes whenever any of the above changes (for UI caches).
     pub key: u64,
+    /// Like `key`, without exposure and gamma (the GPU canvas applies them as uniforms, so its
+    /// display LUT doesn't depend on them).
+    pub lut_key: u64,
     /// Changes whenever what the GPU canvas texture stores changes (`source`, `encode_srgb`),
     /// but not with the monitor: the GPU canvas shares its texture between displays and only
     /// the display LUT is per display.
@@ -56,13 +70,47 @@ pub struct CanvasDisplay {
 impl CanvasDisplay {
     /// Nothing to do: values go to the screen unchanged.
     pub fn is_identity(&self) -> bool {
-        !self.encode_srgb && self.transform.is_none()
+        !self.encode_srgb && self.transform.is_none() && self.viewer.is_none() && self.is_neutral()
+    }
+
+    /// Exposure and gamma leave values alone.
+    pub fn is_neutral(&self) -> bool {
+        self.gain == 1.0 && self.inv_gamma == 1.0
     }
 
     /// CPU canvas: a straight-alpha composite → RGBA8 monitor values.
     pub fn to_rgba8(&self, buf: &Buffer) -> Rgba8Image {
+        if self.encode_srgb && (self.viewer.is_some() || !self.is_neutral()) {
+            return self.viewed_rgba8(buf);
+        }
         let mut img = if self.encode_srgb { encode_rgba8(buf) } else { buf.to_rgba8() };
         if let Some(t) = &self.transform {
+            apply_u8(t, &mut img.pixels);
+        }
+        img
+    }
+
+    /// [`CanvasDisplay::to_rgba8`] through exposure, the OCIO viewer (else the sRGB encoding
+    /// and the monitor transform) and gamma, as the GPU canvas shader does.
+    fn viewed_rgba8(&self, buf: &Buffer) -> Rgba8Image {
+        use rayon::prelude::*;
+        let mut img = Rgba8Image::new(buf.rect.width(), buf.rect.height());
+        let (gain, inv_gamma) = (self.gain, self.inv_gamma);
+        let code = |v: f32| (v.clamp(0.0, 1.0) * 255.0 + 0.5) as u8;
+        img.pixels.par_chunks_mut(4 * 1024).zip(buf.px.par_chunks(1024)).for_each(|(out, px)| {
+            for (o, p) in out.as_chunks_mut::<4>().0.iter_mut().zip(px) {
+                let lin = [p[0], p[1], p[2]].map(|v| if v.is_finite() { v * gain } else { 0.0 });
+                let shown = match &self.viewer {
+                    Some(lut) => lut.apply(lin),
+                    None => lin.map(|v| photocraft_color::convert::linear_to_srgb(v.clamp(0.0, 1.0))),
+                };
+                let g = |v: f32| if inv_gamma == 1.0 { v } else { v.max(0.0).powf(inv_gamma) };
+                *o = [code(g(shown[0])), code(g(shown[1])), code(g(shown[2])), code(p[3])];
+            }
+        });
+        if self.viewer.is_none()
+            && let Some(t) = &self.transform
+        {
             apply_u8(t, &mut img.pixels);
         }
         img
@@ -244,11 +292,14 @@ struct MonitorEntry {
     status: MonitorStatus,
 }
 
+/// (mode space, document profile, monitor profile, viewer LUT, gain bits, 1 / gamma bits).
+type CanvasKey = (ColorSpace, u64, u64, Option<u64>, u32, u32);
+
 /// Caches of [`ColorState`] for the display (monitor profiles per display, per-document displays).
 #[derive(Default)]
 pub struct DisplayCaches {
     monitor: Mutex<HashMap<Option<u32>, MonitorEntry>>,
-    canvas: Mutex<HashMap<(ColorSpace, u64, u64), Arc<CanvasDisplay>>>,
+    canvas: Mutex<HashMap<CanvasKey, Arc<CanvasDisplay>>>,
 }
 
 impl ColorState {
@@ -395,26 +446,37 @@ impl ColorState {
         let space = mode_space(doc.mode);
         let doc_hash = doc.icc_profile.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == space).map_or(0, |p| p.content_hash());
         let monitor = self.monitor_for(display);
-        let key = (space, doc_hash, monitor.content_hash());
+        // A viewer that can't be built (a config that went away) leaves the ICC display on;
+        // the viewer commands report why.
+        let viewer = self.viewer_lut().unwrap_or(None);
+        let (gain, inv_gamma) = (self.viewer.gain(), self.viewer.inv_gamma());
+        let key = (space, doc_hash, monitor.content_hash(), viewer.as_ref().map(|v| v.1), gain.to_bits(), inv_gamma.to_bits());
         if let Some(d) = self.display.canvas.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
             return Ok(d.clone());
         }
         let composite = composite_profile(doc);
         let encode_srgb = is_linear_rgb(&composite);
+        // The viewer takes linear values: a composite in a non-linear profile keeps the ICC path.
+        let viewer = viewer.filter(|_| encode_srgb);
         let source = if encode_srgb { Arc::new(srgb_curve_twin(&composite)) } else { composite };
-        let transform = if source.content_hash() == monitor.content_hash() {
+        let transform = if viewer.is_some() || source.content_hash() == monitor.content_hash() {
             None
         } else {
             let t = Transform::new(&source, &monitor, DISPLAY_INTENT, DISPLAY_BPC).map_err(|e| EngineError::Other(format!("colour management: {e}")))?;
             (!is_identity(&t, space == ColorSpace::Gray)).then(|| Arc::new(t))
         };
+        let lut_key = hash_of((source.content_hash(), monitor.content_hash(), encode_srgb, transform.is_some(), viewer.as_ref().map(|v| v.1)));
         let d = Arc::new(CanvasDisplay {
             encode_srgb,
-            key: hash_of((source.content_hash(), monitor.content_hash(), encode_srgb, transform.is_some())),
+            key: hash_of((lut_key, gain.to_bits(), inv_gamma.to_bits())),
+            lut_key,
             texture_key: hash_of((source.content_hash(), encode_srgb)),
             source,
             monitor,
             transform,
+            viewer: viewer.map(|v| v.0),
+            gain,
+            inv_gamma,
         });
         let mut c = self.display.canvas.lock().unwrap_or_else(|e| e.into_inner());
         if c.len() > 32 {
@@ -429,18 +491,17 @@ impl ColorState {
         self.display_signature_for(doc, self.main_display)
     }
 
-    /// Changes whenever the canvas display of `doc` on `display` changes: profiles, monitor,
-    /// Proof Colors, Gamut Warning and 32-bit preview settings (for the UI's LUT cache).
+    /// Changes whenever the display LUT of `doc` on `display` changes: profiles, monitor, the
+    /// OCIO viewer, Proof Colors and Gamut Warning (for the UI's LUT cache; not exposure or
+    /// gamma, which the GPU canvas applies as uniforms).
     pub fn display_signature_for(&self, doc: &Document, display: Option<u32>) -> u64 {
-        let cm = self.canvas_display_for(doc, display).map(|d| d.key).unwrap_or(0);
+        let cm = self.canvas_display_for(doc, display).map(|d| d.lut_key).unwrap_or(0);
         // Per frame: read the proof state in place (the default state allocates a profile).
         let proof = self.proof_ref(doc.id).filter(|pv| pv.enabled || pv.gamut_warning).map(|pv| {
             let s = &pv.setup;
             (pv.enabled, pv.gamut_warning, s.profile.content_hash(), s.intent, s.bpc, s.simulate_paper, s.kind, pv.gamut_threshold.to_bits())
         });
-        let hdr =
-            crate::proof_sim::hdr_active(self, doc).then(|| self.hdr.get(&doc.id).map(|h| (h.highlight_compression, h.exposure.to_bits(), h.gamma.to_bits())));
-        hash_of((cm, proof, hdr))
+        hash_of((cm, proof))
     }
 }
 

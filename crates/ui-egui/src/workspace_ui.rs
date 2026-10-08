@@ -1,7 +1,7 @@
 //! Shell-only Window and View items: Window › Workspace › New / Delete / Lock Workspace (saved
 //! in the preferences), Window › Modifier Keys (sticky Shift/⌘/⌥ for touch and pen users),
 //! View › Pixel Aspect Ratio › Custom Pixel Aspect Ratio…, View › Show › Show Extras Options…
-//! and the View › 32-bit Preview Options dialog.
+//! and the View › Viewer Options dialog.
 //!
 //! State is [`ShellUi`] (serialisable, part of `UiState`); saved workspaces and the lock live in
 //! `Preferences::workspaces` / `workspace_locked` so they persist with the preferences.
@@ -30,7 +30,7 @@ pub struct ShellUi {
     pub sticky_alt: bool,
     /// Custom pixel aspect ratios (the active one is `ViewOptions::pixel_aspect` = `custom:<ratio>:<name>`).
     pub custom_pars: Vec<CustomPar>,
-    /// Open dialog: (kind, fields). Kinds: newWorkspace, deleteWorkspace, customPar, preview32,
+    /// Open dialog: (kind, fields). Kinds: newWorkspace, deleteWorkspace, customPar, viewer,
     /// extrasOptions.
     pub dialog: Option<(String, Map<String, Value>)>,
 }
@@ -62,7 +62,6 @@ pub fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
 pub fn is_enabled(app: &PhotocraftApp, id: &str) -> Option<bool> {
     Some(match id {
         "window.workspace.deleteWorkspace" => !app.session.prefs().workspaces.is_empty(),
-        "view.thirtyTwoBitPreviewOptions" => app.session.is_enabled(id),
         i if handles(i) => true,
         _ => return None,
     })
@@ -102,13 +101,13 @@ const PRESETS: [&str; 6] = ["Essentials", "Photography", "Painting", "Pixel Art"
 
 /// Run a shell command, or open its dialog. `None` when `id` isn't ours.
 pub fn menu(app: &mut PhotocraftApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
-    if id == "view.thirtyTwoBitPreviewOptions" && no_params(params) {
-        let d = app.session.active()?;
-        let h = app.session.color.hdr.get(&d.doc.id).copied().unwrap_or_default();
+    if id == "view.viewerOptions" && no_params(params) {
+        let v = &app.session.color.viewer;
+        let r = app.session.color.viewer_report();
         return Some(open(
             app,
-            "preview32",
-            json!({"method": if h.highlight_compression { "highlightCompression" } else { "exposureGamma" }, "exposure": h.exposure, "gamma": h.gamma}),
+            "viewer",
+            json!({"ocio": v.ocio, "display": r["display"], "view": r["view"], "look": v.look, "exposure": v.exposure, "gamma": v.gamma}),
         ));
     }
     if !handles(id) {
@@ -281,7 +280,7 @@ pub fn dialog_command(kind: &str, f: &Map<String, Value>) -> Option<(&'static st
         "newWorkspace" => ("window.workspace.newWorkspace", Value::Object(f.clone())),
         "deleteWorkspace" => ("window.workspace.deleteWorkspace", json!({"name": f.get("name")})),
         "customPar" => ("view.pixelAspectRatio.custom", json!({"name": f.get("name"), "ratio": f.get("ratio")})),
-        "preview32" => ("view.thirtyTwoBitPreviewOptions", Value::Object(f.clone())),
+        "viewer" => ("view.viewerOptions", Value::Object(f.clone())),
         "extrasOptions" => ("view.show.showExtrasOptions", Value::Object(f.clone())),
         _ => return None,
     })
@@ -320,10 +319,11 @@ fn dialog(app: &mut PhotocraftApp, ctx: &egui::Context) {
         "newWorkspace" => "New Workspace",
         "deleteWorkspace" => "Delete Workspace",
         "customPar" => "Save Pixel Aspect Ratio",
-        "preview32" => "32-bit Preview Options",
+        "viewer" => "Viewer Options",
         _ => "Show Extras Options",
     };
     let names: Vec<String> = app.session.prefs().workspaces.keys().cloned().collect();
+    let ocio = if kind == "viewer" { app.session.color.ocio().map_err(|e| e.to_string()) } else { Err(String::new()) };
     let mut result: Option<bool> = None;
     egui::Window::new(title).id(egui::Id::new("shell-dialog")).collapsible(false).resizable(false).anchor(Align2::CENTER_CENTER, vec2(0.0, 0.0)).show(
         ctx,
@@ -379,21 +379,41 @@ fn dialog(app: &mut PhotocraftApp, ctx: &egui::Context) {
                     text(ui, &mut f, "name", tl!("Name:"));
                     number(ui, &mut f, "ratio", tl!("Factor:"), 0.1..=10.0);
                 }
-                "preview32" => {
-                    let mut m = f.get("method").and_then(Value::as_str).unwrap_or("exposureGamma").to_string();
-                    if crate::widgets::dropdown(
-                        ui,
-                        "p32-method",
-                        &mut m,
-                        &[("exposureGamma".to_string(), tl!("Exposure and Gamma")), ("highlightCompression".to_string(), tl!("Highlight Compression"))],
-                        180.0,
-                    ) {
-                        f.insert("method".into(), json!(m));
+                "viewer" => {
+                    check(ui, &mut f, "ocio", tl!("OCIO Display Transform"));
+                    match &ocio {
+                        Ok(cfg) => {
+                            let pick = |ui: &mut egui::Ui, f: &mut Map<String, Value>, key: &str, label: &str, opts: Vec<String>, none: bool| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(tl!(&label)).color(t.text_dim).size(11.0));
+                                    let mut cur = f.get(key).and_then(Value::as_str).unwrap_or("").to_string();
+                                    let mut list: Vec<(String, &str)> = if none { vec![(String::new(), tl!("None"))] } else { Vec::new() };
+                                    list.extend(opts.iter().map(|o| (o.clone(), o.as_str())));
+                                    if crate::widgets::dropdown(ui, key, &mut cur, &list, 260.0) {
+                                        f.insert(key.into(), json!(cur));
+                                    }
+                                });
+                            };
+                            let on = f.get("ocio").and_then(Value::as_bool).unwrap_or(false);
+                            ui.add_enabled_ui(on, |ui| {
+                                pick(ui, &mut f, "display", tl!("Display:"), cfg.displays(), false);
+                                let display = f.get("display").and_then(Value::as_str).unwrap_or("").to_string();
+                                let views = cfg.views(&display);
+                                // A view the new display lacks becomes its default (as the command does).
+                                if !views.iter().any(|v| Some(v.as_str()) == f.get("view").and_then(Value::as_str)) {
+                                    f.insert("view".into(), json!(cfg.default_view(&display)));
+                                }
+                                pick(ui, &mut f, "view", tl!("View:"), views, false);
+                                pick(ui, &mut f, "look", tl!("Look:"), cfg.looks(), true);
+                            });
+                            ui.label(RichText::new(format!("{} ({})", cfg.name(), cfg.source)).color(t.text_faint).size(10.5));
+                        }
+                        Err(e) => {
+                            ui.label(RichText::new(e).color(t.text_faint).size(10.5));
+                        }
                     }
-                    ui.add_enabled_ui(m == "exposureGamma", |ui| {
-                        number(ui, &mut f, "exposure", tl!("Exposure:"), -20.0..=20.0);
-                        number(ui, &mut f, "gamma", tl!("Gamma:"), 0.1..=9.99);
-                    });
+                    number(ui, &mut f, "exposure", tl!("Exposure:"), -20.0..=20.0);
+                    number(ui, &mut f, "gamma", tl!("Gamma:"), 0.1..=10.0);
                 }
                 _ => {
                     for (k, label) in [
@@ -554,16 +574,20 @@ mod tests {
     }
 
     #[test]
-    fn thirty_two_bit_preview_dialog() {
+    fn viewer_options_dialog() {
         let (mut app, ctx) = app();
-        app.run("file.new", json!({"width": 20, "height": 20, "depth": 32})).unwrap();
-        let r = crate::menus::invoke(&mut app, &ctx, "view.thirtyTwoBitPreviewOptions", json!({})).unwrap();
-        assert_eq!(r["dialog"], "preview32");
+        let r = crate::menus::invoke(&mut app, &ctx, "view.viewerOptions", json!({})).unwrap();
+        assert_eq!(r["dialog"], "viewer");
         let (kind, mut f) = app.ui.shell.dialog.clone().unwrap();
+        assert_eq!(f["display"], "sRGB - Display");
+        crate::analysis_ui::tests::render(&mut app, &ctx, windows);
+        f.insert("ocio".into(), json!(true));
+        f.insert("view".into(), json!("Un-tone-mapped"));
         f.insert("exposure".into(), json!(1.5));
         let (id, p) = dialog_command(&kind, &f).unwrap();
         crate::menus::invoke(&mut app, &ctx, id, p).unwrap();
-        let d = app.session.active().unwrap().doc.id;
-        assert_eq!(app.session.color.hdr[&d].exposure, 1.5);
+        let v = &app.session.color.viewer;
+        assert!(v.ocio);
+        assert_eq!((v.view.as_str(), v.exposure), ("Un-tone-mapped", 1.5));
     }
 }

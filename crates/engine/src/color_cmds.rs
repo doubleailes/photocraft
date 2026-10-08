@@ -125,6 +125,9 @@ pub struct ColorSettings {
     /// Monitor profile the canvas is displayed in: `auto` (the main display's profile when the
     /// platform supplies it, else sRGB), a built-in RGB profile id or an `.icc` path.
     pub monitor_profile: String,
+    /// OCIO config for the viewer (`crate::viewer`): a `.ocio` path or an `ocio://` URI; empty
+    /// = `$OCIO`, else `ocio://cg-config-latest`.
+    pub ocio_config: String,
 }
 
 impl Default for ColorSettings {
@@ -143,6 +146,7 @@ impl Default for ColorSettings {
             dither: true,
             blend_text_gamma: photocraft_compose::psblend::TEXT_GAMMA,
             monitor_profile: "auto".into(),
+            ocio_config: String::new(),
         }
     }
 }
@@ -183,6 +187,10 @@ pub fn validate_settings(c: &ColorSettings) -> std::result::Result<(), String> {
             return Err(format!("monitor profile `{m}` is {:?}, not RGB", p.color_space));
         }
     }
+    let ocio = c.ocio_config.trim();
+    if !ocio.is_empty() {
+        photocraft_ocio::Ocio::open(ocio, photocraft_ocio::ConfigOrigin::Settings).map_err(|e| e.to_string())?;
+    }
     if Intent::parse(&c.intent).is_none() {
         return Err(format!("unknown intent `{}` (perceptual|relative|saturation|absolute)", c.intent));
     }
@@ -205,8 +213,9 @@ pub struct ColorState {
     pub main_display: Option<u32>,
     display_cache: Mutex<HashMap<DisplayKey, Arc<Transform>>>,
     pub(crate) display: crate::display_color::DisplayCaches,
-    /// View › 32-bit Preview Options per document.
-    pub hdr: HashMap<DocId, crate::proof_sim::HdrPreview>,
+    /// The canvas viewer: OCIO display/view/look, exposure and gamma (`crate::viewer`).
+    pub viewer: crate::viewer::ViewerSettings,
+    pub(crate) ocio: crate::viewer::OcioCache,
 }
 
 impl ColorState {
@@ -329,54 +338,47 @@ impl ColorState {
     /// The display transform as an `size³` RGBA 3D LUT (upload with
     /// [`Lut3d::to_rgba16f_bytes`] and apply in the canvas shader).
     pub fn display_lut(&self, doc: &Document, size: usize) -> Result<Lut3d> {
-        self.display_lut_with(doc, size, true, self.main_display)
+        self.display_lut_with(doc, size, self.main_display)
     }
 
-    /// [`ColorState::display_lut`], with or without the 32-bit preview (exposure/gamma), for
-    /// `display`.
-    fn display_lut_with(&self, doc: &Document, size: usize, hdr: bool, display: Option<u32>) -> Result<Lut3d> {
-        if let Some(lut) = crate::proof_sim::display_lut_with(self, doc, size, hdr, display)? {
+    /// [`ColorState::display_lut`] for `display`.
+    fn display_lut_with(&self, doc: &Document, size: usize, display: Option<u32>) -> Result<Lut3d> {
+        if let Some(lut) = crate::proof_sim::display_lut_with(self, doc, size, display)? {
             return Ok(lut);
         }
         let t = self.display_transform_for(doc, display)?;
         Ok(Lut3d::from_transform(&t, size))
     }
 
-    /// View › 32-bit Preview Options of `doc` when they change the display (a 32-bit document
-    /// with a non-default exposure or gamma).
-    pub fn hdr_preview(&self, doc: &Document) -> Option<crate::proof_sim::HdrPreview> {
-        if crate::proof_sim::hdr_active(self, doc) { self.hdr.get(&doc.id).copied() } else { None }
-    }
-
-    /// What the canvas should do for `doc`: `None` when the canvas values go to the screen
-    /// unchanged (the document's display profile matches the monitor and neither Proof Colors,
-    /// Gamut Warning nor a 32-bit preview is on), else an RGBA8 display LUT (`size`³, red fastest)
-    /// mapping canvas texture values to the monitor, whose alpha is 255 where the colour is out
-    /// of the proof gamut (only with Gamut Warning on).
+    /// What the canvas should do for `doc` with the ICC display: `None` when the canvas values
+    /// go to the screen unchanged (the document's display profile matches the monitor and
+    /// neither Proof Colors nor Gamut Warning is on), else an RGBA8 display LUT (`size`³, red
+    /// fastest) mapping canvas texture values to the monitor, whose alpha is 255 where the
+    /// colour is out of the proof gamut (only with Gamut Warning on). The OCIO viewer
+    /// ([`CanvasDisplay::viewer`](crate::display_color::CanvasDisplay)) replaces it when on;
+    /// exposure and gamma are applied around it by the canvas.
     pub fn canvas_lut(&self, doc: &Document, size: usize) -> Result<Option<Vec<u8>>> {
-        self.canvas_lut_with(doc, size, true, self.main_display)
+        self.canvas_lut_with(doc, size, self.main_display)
     }
 
-    /// [`ColorState::canvas_lut`] without the 32-bit preview, which the GPU canvas shader applies
-    /// itself (see [`ColorState::hdr_preview`]) so that 32-bit values above 1.0, kept by its float
-    /// texture, are exposed into range rather than clipped by the LUT's 0..1 domain.
+    /// [`ColorState::canvas_lut`] (the GPU canvas's).
     pub fn gpu_canvas_lut(&self, doc: &Document, size: usize) -> Result<Option<Vec<u8>>> {
         self.gpu_canvas_lut_for(doc, size, self.main_display)
     }
 
     /// [`ColorState::gpu_canvas_lut`] for a window on `display`.
     pub fn gpu_canvas_lut_for(&self, doc: &Document, size: usize, display: Option<u32>) -> Result<Option<Vec<u8>>> {
-        self.canvas_lut_with(doc, size, false, display)
+        self.canvas_lut_with(doc, size, display)
     }
 
-    fn canvas_lut_with(&self, doc: &Document, size: usize, hdr: bool, on: Option<u32>) -> Result<Option<Vec<u8>>> {
+    fn canvas_lut_with(&self, doc: &Document, size: usize, on: Option<u32>) -> Result<Option<Vec<u8>>> {
         let size = size.max(2);
         let pv = self.proof(doc.id);
         let display = self.canvas_display_for(doc, on)?;
-        if !pv.enabled && !pv.gamut_warning && !(hdr && crate::proof_sim::hdr_active(self, doc)) {
+        if !pv.enabled && !pv.gamut_warning {
             return Ok(display.transform.as_ref().map(|t| Lut3d::from_transform(t, size).to_rgba8()));
         }
-        let lut = self.display_lut_with(doc, size, hdr, on)?;
+        let lut = self.display_lut_with(doc, size, on)?;
         let mut bytes = lut.to_rgba8();
         let check = if pv.gamut_warning { Some(GamutCheck::new(&display.source, &pv.setup.profile, pv.gamut_threshold).map_err(cms_err)?) } else { None };
         let s = (size - 1) as f32;

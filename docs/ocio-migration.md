@@ -16,7 +16,7 @@ Photoshop parity on purpose: CMYK, Lab, ICC proofing and the profile menus go aw
 | Compositing | Linear, f32 working precision, in `scene_linear`. Blend modes behave like Nuke, not Photoshop. |
 | Modes | RGB and Grayscale. CMYK, Lab, Indexed, Bitmap, Duotone and Multichannel are deleted (done, see step 3a); files in those modes are converted when opened. |
 | Config | Default `ocio://cg-config-latest` (ACES 2.0, OCIO 2.5). `$OCIO` overrides it. A Color Settings override (file path) wins over both. |
-| Viewer | Display / View / Look pickers + exposure/gamma before the view transform. Baked LUT (shaper + 64³ Rgba16Float) now, analytic WGSL once ocio-rs [#9](https://github.com/doubleailes/ocio-rs/issues/9) lands. |
+| Viewer | Display / View / Look pickers + exposure before the view transform, gamma after it (on display values, like OCIO's display CC and Nuke). Baked LUT (shaper + 64³ Rgba16Float) now, analytic WGSL once ocio-rs [#9](https://github.com/doubleailes/ocio-rs/issues/9) lands. |
 
 ## ocio-rs prerequisites
 
@@ -171,6 +171,40 @@ Where this leaves step 4:
   before, a brush dab in the tens of ms at 36 MP. Filters are the slowest hit (+60% at both
   sizes), since they now work on 2× the bytes.
 
+### Phase 5, first slice: the OCIO viewer (2026-10-08)
+
+Started before phases 2–4, so it carries the part of phase 2 it needs.
+
+* **`crates/ocio` (`photocraft-ocio`, L0).** Config loading (Color Settings › `ocioConfig`, then
+  `$OCIO`, then `ocio://cg-config-latest`; a named config that fails is an error, never a silent
+  fallback), display/view/look/role lists, a `catch_unwind` guard around every ocio-rs call
+  (ocio-rs #7), and `bake_viewer(src, display, view, look, size)`: a log2 shaper
+  (2^-12…2^12, 0 → 0 exactly) and a `size`³ LUT, sampled trilinearly by the GPU and the CPU
+  (`ViewerLut::apply`). 64³ bakes in about 140 ms (release); `Un-tone-mapped` stays within
+  2/255 of the exact sRGB curve. Builds for wasm. No processor cache or other roles yet (rest of phase 2).
+* **Viewer state** (`crates/engine/src/viewer.rs`). Session-wide `ColorState::viewer`:
+  `ocio` (on/off), display, view, look, exposure, gamma. It lives in the engine, not
+  `ui-egui/src/state.rs`, because the engine bakes the LUT and the CLI/MCP drive it the same way.
+  Not saved yet. Commands (no document needed, `{}` reports the state and the config's choices):
+  `view.viewerOptions` (View › Viewer Options…, all fields; the UI opens its dialog),
+  `view.ocio.display` (`none` = off), `view.ocio.view`, `view.ocio.look` (`none`),
+  `view.exposure`, `view.gamma`. Bad names or params are errors and change nothing.
+* **Canvas.** Off (the default), the ICC display is unchanged. On, the linear composite goes
+  `Linear Rec.709 (sRGB)` (pixels are linear sRGB until phase 3) → look → display/view instead
+  of the ICC monitor transform; Proof Colors and Gamut Warning don't apply. GPU: display mode 3,
+  the LUT is an `Rgba16Float` 3D texture behind the shader's copy of the shaper (a test keeps
+  the constants in step). CPU canvas: `CanvasDisplay::to_rgba8` samples the same LUT. A viewer
+  whose config went away falls back to the ICC display.
+* **Exposure and gamma** replace View › 32-bit Preview Options (removed, parity floor 618 → 617):
+  exposure is a scene-linear gain before the view (or the sRGB encode), gamma applies to display
+  values after it, for every document, with or without OCIO. Both are shader uniforms, so the
+  GPU display LUT isn't rebuilt while dragging.
+* **Still open:** saving the viewer with the preferences/workspace, a viewer toolbar above the
+  canvas (Nuke-style quick pickers), Color Settings UI for `ocioConfig`, the channel view and
+  Print through the viewer, a 65 536-entry table or analytic WGSL (ocio-rs #9) instead of the
+  baked LUT, negative/out-of-gamut linear values (the shaper clamps them to 0), and per-document
+  source spaces once phase 3 adds `Document.color_space`.
+
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**
    * Owns config loading in this order: Color Settings path, then `$OCIO`, then `ocio://cg-config-latest`.
@@ -186,7 +220,7 @@ Where this leaves step 4:
    * The colour picker, swatches and the foreground/background colours go through `color_picking`, so picked values are shown in the picking space and stored linear.
    * Brushes and gradients interpolate in linear (optionally in `color_picking` for gradients, a TBD setting).
    * Update the CPU/GPU parity tests.
-5. **Viewer.**
+5. **Viewer.** (First slice landed, see above.)
    * `display_color.rs` and `gpu_canvas.rs`: the display/view/look state lives in `ui-egui/src/state.rs`, set through engine commands (`view.ocio.display`, `view.ocio.view`, `view.ocio.look`, `view.exposure`, `view.gamma`).
    * The LUT texture becomes Rgba16Float with a log shaper input.
    * The 32-bit preview options are replaced by exposure/gamma.

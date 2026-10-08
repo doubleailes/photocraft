@@ -35,6 +35,8 @@ impl Class {
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
     ("cms", Class::Layer(0)),
+    // OpenColorIO (ocio-rs): config loading, viewer LUTs. No workspace deps.
+    ("ocio", Class::Layer(0)),
     ("color", Class::Layer(0)),
     ("raster", Class::Layer(0)),
     ("psd", Class::Standalone),

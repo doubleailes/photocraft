@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use crate::{EngineError, Result, Session, inspect, pixels};
 
-type Run = fn(&mut Session, &Value) -> Result<Value>;
+pub(crate) type Run = fn(&mut Session, &Value) -> Result<Value>;
 type Enabled = fn(&Session) -> std::result::Result<(), String>;
 
 /// Metadata + implementation for one command.
@@ -989,6 +989,7 @@ fn build() -> Vec<CommandSpec> {
     }
     v.extend(crate::layer_style::specs());
     v.extend(crate::filters::specs());
+    v.extend(crate::viewer::specs());
     v.extend(crate::filters_ext::specs());
     v.extend(crate::gallery_cmds::specs());
     v.extend(crate::gradient_fill_cmds::specs());

@@ -1,0 +1,14 @@
+[package]
+name = "photocraft-ocio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "OpenColorIO for PhotoCraft: config loading, display/view/look lists and baked viewer LUTs (pure Rust, ocio-rs)."
+
+[lints]
+workspace = true
+
+[dependencies]
+ocio = "0.1"
+half = "2"
+thiserror = { workspace = true }

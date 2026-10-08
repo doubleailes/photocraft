@@ -37,6 +37,9 @@ pub const DEFAULT_TILE: u32 = 8192;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Canvas texture format of high-bit documents (see [`GpuCanvas::format_for`]).
 const FORMAT_HIGH: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The OCIO viewer LUT's log shaper, as the canvas shader hard-codes it (`fn shaper`).
+pub const SHAPER_LO: f32 = -12.0;
+pub const SHAPER_HI: f32 = 12.0;
 /// Largest high-bit document (in pixels) given an `Rgba16Float` canvas texture: 100 MP is
 /// 800 MB at level 0, about 1.07 GB with mips (twice the `Rgba8Unorm` cost). Bigger 16/32-bit
 /// documents (a 14000² one would need 2.1 GB) use `Rgba8Unorm`, so they stay on the GPU like
@@ -64,14 +67,14 @@ pub struct ViewParams {
     /// Distinguishes views painted in the same frame (main canvas, extra windows).
     pub view_key: u64,
     /// Display transform: 0 none, 1 the document's display LUT (document → monitor profile,
-    /// Proof Colors), 2 LUT plus the gamut warning (see [`GpuCanvas::set_display_lut`]).
+    /// Proof Colors), 2 LUT plus the gamut warning (see [`GpuCanvas::set_display_lut`]), 3 the
+    /// OCIO viewer LUT behind its log shaper ([`GpuCanvas::set_viewer_lut`]).
     pub display: u8,
     /// The display the view is on (its LUT is per document and display, #569; 0 = unknown).
     pub output: u32,
-    /// View › 32-bit Preview Options (exposure in stops, gamma), applied to the texture values
-    /// before the display LUT; `None` when off. The display LUT must then leave it out
-    /// (`ColorState::gpu_canvas_lut`).
-    pub hdr: Option<[f32; 2]>,
+    /// Viewer exposure (stops, scene-linear gain before the display LUT) and gamma (on the
+    /// display values after it); `None` when neutral (`photocraft_engine::viewer`).
+    pub grade: Option<[f32; 2]>,
 }
 
 /// When high-bit documents get an `Rgba16Float` canvas texture.
@@ -610,6 +613,17 @@ impl GpuCanvas {
     /// `size`³ RGBA8 texels, red fastest. RGB is the display colour for each lattice input;
     /// alpha 255 marks out-of-gamut colours for the gamut warning.
     pub fn set_display_lut(&self, doc: u64, output: u32, size: u32, rgba: Option<&[u8]>) {
+        self.set_lut(doc, output, size, rgba, FORMAT);
+    }
+
+    /// Set the OCIO viewer LUT of document `doc` on display `output` (display mode 3):
+    /// `size`³ `Rgba16Float` texels (`photocraft_ocio::ViewerLut::to_rgba16f_bytes`), sampled
+    /// through the log shaper ([`SHAPER_LO`], [`SHAPER_HI`]).
+    pub fn set_viewer_lut(&self, doc: u64, output: u32, size: u32, rgba16f: &[u8]) {
+        self.set_lut(doc, output, size, Some(rgba16f), FORMAT_HIGH);
+    }
+
+    fn set_lut(&self, doc: u64, output: u32, size: u32, rgba: Option<&[u8]>, format: wgpu::TextureFormat) {
         if !self.health.is_ok() {
             return;
         }
@@ -622,11 +636,12 @@ impl GpuCanvas {
                 res.luts.remove(&(doc, output));
             }
             Some(bytes) => {
-                if size < 2 || bytes.len() as u64 != (size as u64).pow(3) * 4 {
+                let texel = if format == FORMAT_HIGH { 8 } else { 4 };
+                if size < 2 || bytes.len() as u64 != (size as u64).pow(3) * texel {
                     log::warn!("set_display_lut: {} bytes for a {size}³ LUT; ignored", bytes.len());
                     return;
                 }
-                let bg = lut_bind_group(device, queue, &res.lut_bgl, size, bytes);
+                let bg = lut_bind_group(device, queue, &res.lut_bgl, size, bytes, format);
                 res.luts.insert((doc, output), bg);
             }
         }
@@ -1142,8 +1157,9 @@ impl Default for CanvasStyle {
     }
 }
 
-/// A `size`³ RGBA8 3D texture bound for the canvas shader.
-fn lut_bind_group(device: &wgpu::Device, queue: &wgpu::Queue, bgl: &wgpu::BindGroupLayout, size: u32, bytes: &[u8]) -> wgpu::BindGroup {
+/// A `size`³ RGBA8 (or `Rgba16Float`) 3D texture bound for the canvas shader.
+fn lut_bind_group(device: &wgpu::Device, queue: &wgpu::Queue, bgl: &wgpu::BindGroupLayout, size: u32, bytes: &[u8], format: wgpu::TextureFormat) -> wgpu::BindGroup {
+    let texel = if format == FORMAT_HIGH { 8 } else { 4 };
     let extent = wgpu::Extent3d { width: size, height: size, depth_or_array_layers: size };
     let texture = device.create_texture(&wgpu::TextureDescriptor {
         label: Some("pc_display_lut"),
@@ -1151,14 +1167,14 @@ fn lut_bind_group(device: &wgpu::Device, queue: &wgpu::Queue, bgl: &wgpu::BindGr
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D3,
-        format: FORMAT,
+        format,
         usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         view_formats: &[],
     });
     queue.write_texture(
         wgpu::TexelCopyTextureInfo { texture: &texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All },
         bytes,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size * 4), rows_per_image: Some(size) },
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(size * texel), rows_per_image: Some(size) },
         extent,
     );
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -1349,7 +1365,7 @@ impl Resources {
         });
         let encode_pipeline = pipeline(device, "pc_encode", &encode_layout, &encode_module, ("vs", "fs"), FORMAT, None);
         let encode_pipeline_high = high.then(|| pipeline(device, "pc_encode_16f", &encode_layout, &encode_module, ("vs", "fs"), FORMAT_HIGH, None));
-        let identity_lut = lut_bind_group(device, queue, &lut_bgl, 2, &identity_lut_bytes());
+        let identity_lut = lut_bind_group(device, queue, &lut_bgl, 2, &identity_lut_bytes(), FORMAT);
         Self {
             lut_bgl,
             luts: HashMap::new(),
@@ -1557,8 +1573,8 @@ impl CanvasCallback {
         let grid = if p.pixel_grid && p.zoom >= 8.0 { 0.16 } else { 0.0 };
         let square = if style.checker_square > 0.0 { (style.checker_square * ppp).round().max(1.0) } else { 0.0 };
         let (l, d, g) = (style.checker_light, style.checker_dark, style.gamut_color);
-        // 32-bit preview: linear-light gain 2^exposure (0 = off) and 1 / gamma.
-        let (gain, inv_gamma) = match p.hdr {
+        // Viewer exposure and gamma: linear-light gain 2^exposure (0 = off) and 1 / gamma.
+        let (gain, inv_gamma) = match p.grade {
             Some([e, gm]) if e.is_finite() && gm.is_finite() && gm > 0.0 => (2f32.powf(e.clamp(-20.0, 20.0)), 1.0 / gm.max(0.01)),
             _ => (0.0, 1.0),
         };
@@ -1680,10 +1696,10 @@ struct View {
     a: vec4<f32>, // screen_w, screen_h, scale (device px per doc px), pixels_per_point
     b: vec4<f32>, // doc origin x, y (device px), doc w, h (doc px)
     c: vec4<f32>, // filter mode, lod, grid alpha, checker square (device px)
-    d: vec4<f32>, // checker anchor x, y (device px), display (0 none, 1 LUT, 2 LUT + gamut), output linear
+    d: vec4<f32>, // checker anchor x, y (device px), display (0 none, 1 LUT, 2 LUT + gamut, 3 OCIO), output linear
     e: vec4<f32>, // checker light rgb, gamut warning opacity
-    f: vec4<f32>, // checker dark rgb, 32-bit preview gain (2^exposure; 0 = off)
-    g: vec4<f32>, // gamut warning rgb, 32-bit preview 1 / gamma
+    f: vec4<f32>, // checker dark rgb, viewer gain (2^exposure; 0 = off)
+    g: vec4<f32>, // gamut warning rgb, viewer 1 / gamma
 };
 struct Tile { r: vec4<f32> }; // x, y, w, h in doc px
 
@@ -1712,6 +1728,14 @@ fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     let lo = c / 12.92;
     let hi = pow((c + 0.055) / 1.055, vec3(2.4));
     return select(hi, lo, c <= vec3(0.04045));
+}
+
+// The OCIO viewer LUT's log shaper (`photocraft_ocio::Shaper::DEFAULT`, SHAPER_LO / SHAPER_HI).
+fn shaper(x: vec3<f32>) -> vec3<f32> {
+    let lo = exp2(-12.0);
+    let span = log2(exp2(12.0) + lo) + 12.0;
+    let v = clamp(x, vec3(0.0), vec3(exp2(12.0)));
+    return (log2(v + lo) + 12.0) / span;
 }
 
 fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
@@ -1796,15 +1820,26 @@ fn fs_tile(in: VOut) -> @location(0) vec4<f32> {
         let f = clamp((tt - i - 0.5) * scale + 0.5, vec2(0.0), vec2(1.0));
         col = textureSampleLevel(tex, samp, (i + 0.5 + f) / size, 0.0);
     }
-    if (view.f.w > 0.0 && col.a > 0.0) {
-        // View › 32-bit Preview Options: exposure and gamma in linear light on the sRGB-encoded
-        // texture value, before the display LUT. A float canvas keeps values above 1.0, so they
-        // are brought into range by the exposure instead of clipped.
+    if (view.d.z > 2.5) {
+        if (col.a > 0.0) {
+            // OCIO viewer: the texture holds the sRGB-encoded linear composite (above 1.0 on a
+            // float canvas). Exposure in scene linear, the log shaper, the baked display/view
+            // LUT, then gamma on the display values.
+            let lin = srgb_to_linear(max(col.rgb / col.a, vec3(0.0))) * select(1.0, view.f.w, view.f.w > 0.0);
+            let n = f32(textureDimensions(lut).x);
+            let l = textureSampleLevel(lut, samp, (shaper(lin) * (n - 1.0) + 0.5) / n, 0.0).rgb;
+            let v = select(l, pow(max(l, vec3(0.0)), vec3(view.g.w)), view.f.w > 0.0);
+            col = vec4(clamp(v, vec3(0.0), vec3(1.0)) * col.a, col.a);
+        }
+    } else if (view.f.w > 0.0 && col.a > 0.0) {
+        // Viewer exposure and gamma on the ICC display: exposure in linear light on the
+        // sRGB-encoded texture value (a float canvas keeps values above 1.0, so they are brought
+        // into range rather than clipped), gamma on the encoded value, before the display LUT.
         let lin = srgb_to_linear(max(col.rgb / col.a, vec3(0.0))) * view.f.w;
-        let v = linear_to_srgb(min(pow(max(lin, vec3(1e-12)), vec3(view.g.w)), vec3(1.0)));
+        let v = pow(linear_to_srgb(min(lin, vec3(1.0))), vec3(view.g.w));
         col = vec4(v * col.a, col.a);
     }
-    if (view.d.z > 0.5 && col.a > 0.0) {
+    if (view.d.z > 0.5 && view.d.z < 2.5 && col.a > 0.0) {
         // Colour management, Proof Colors, Gamut Warning: the document's display LUT (alpha flags
         // out-of-gamut colours).
         let n = f32(textureDimensions(lut).x);
@@ -1881,6 +1916,14 @@ fn fs(in: V) -> @location(0) vec4<f32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn shader_shaper_matches_the_ocio_lut() {
+        let s = photocraft_engine::viewer::Shaper::DEFAULT;
+        assert_eq!((SHAPER_LO, SHAPER_HI), (s.lo, s.hi));
+        assert!(CANVAS_WGSL.contains(&format!("exp2({:.1})", s.lo)) && CANVAS_WGSL.contains(&format!("exp2({:.1})", s.hi)));
+        assert!(CANVAS_WGSL.contains(&format!("+ {:.1}) / span", -s.lo)));
+    }
 
     #[test]
     fn gpu_budget_follows_memory_usage_and_ram() {

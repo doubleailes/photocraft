@@ -1,5 +1,5 @@
-//! View › Proof Setup simulations beyond a plain profile proof, and View › 32-bit Preview
-//! Options. Both become the canvas display LUT (`ColorState::display_lut`).
+//! View › Proof Setup simulations beyond a plain profile proof. They become the canvas display
+//! LUT (`ColorState::display_lut`).
 //!
 //! * Working Cyan/Magenta/Yellow/Black Plate: the composite is separated into the working CMYK
 //!   (proof profile, its intent and BPC) and only that plate is printed, shown as gray ink (the
@@ -11,10 +11,9 @@
 //!   video colourmaps for checking the legibility of displays by dichromats", Color Research &
 //!   Application 24(4): linear RGB → LMS, the missing cone response replaced by its projection
 //!   onto the dichromat's plane, back to RGB (gamut first reduced as in the paper).
-//! * 32-bit Preview Options: exposure (stops) and gamma applied in linear light before the
-//!   display transform, for 32-bit documents. Highlight Compression maps the canvas range to the
-//!   display unchanged: the canvas texture is clamped to 0–1, so there is nothing above white
-//!   to compress.
+//!
+//! Photoshop's 32-bit Preview Options are gone: the viewer's exposure and gamma
+//! (`crate::viewer`) apply to every document.
 
 use photocraft_cms::{Builtin, Intent, Lut3d, Transform};
 use photocraft_doc::Document;
@@ -71,49 +70,6 @@ impl ProofKind {
     }
 }
 
-/// View › 32-bit Preview Options.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-pub struct HdrPreview {
-    /// "exposureGamma" | "highlightCompression".
-    pub highlight_compression: bool,
-    /// Stops, −20…20.
-    pub exposure: f32,
-    /// 0.1…9.99.
-    pub gamma: f32,
-}
-
-impl Default for HdrPreview {
-    fn default() -> Self {
-        Self { highlight_compression: false, exposure: 0.0, gamma: 1.0 }
-    }
-}
-
-impl HdrPreview {
-    pub fn is_identity(&self) -> bool {
-        self.highlight_compression || (self.exposure == 0.0 && self.gamma == 1.0)
-    }
-    fn apply(&self, v: f32) -> f32 {
-        if self.is_identity() {
-            return v;
-        }
-        let lin = srgb_decode(v) * 2f32.powf(self.exposure);
-        srgb_encode(lin.max(0.0).powf(1.0 / self.gamma).min(1.0))
-    }
-}
-
-/// Is a 32-bit preview adjustment active for `doc` (a 32-bit document with non-default options)?
-pub fn hdr_active(c: &ColorState, doc: &Document) -> bool {
-    doc.depth.is_float() && c.hdr.get(&doc.id).is_some_and(|h| !h.is_identity())
-}
-
-/// Changes whenever the display LUT of `doc` changes because of this module (for UI caches).
-pub fn signature(c: &ColorState, doc: &Document) -> String {
-    let pv = c.proof(doc.id);
-    let h = if hdr_active(c, doc) { c.hdr.get(&doc.id).copied() } else { None };
-    format!("{:?} {:?}", pv.setup.kind, h)
-}
-
 fn srgb_decode(v: f32) -> f32 {
     if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) }
 }
@@ -143,18 +99,16 @@ pub fn dichromat(rgb_lin: [f32; 3], protan: bool) -> [f32; 3] {
     mul(&LMS_RGB, lms).map(|c| c.clamp(0.0, 1.0))
 }
 
-/// The display LUT when a simulation or 32-bit preview applies (None = plain profile proof).
+/// The display LUT when a simulation applies (None = plain profile proof).
 pub fn display_lut(c: &ColorState, doc: &Document, size: usize) -> Result<Option<Lut3d>> {
-    display_lut_with(c, doc, size, true, c.main_display)
+    display_lut_with(c, doc, size, c.main_display)
 }
 
-/// [`display_lut`], leaving the 32-bit preview out when `include_hdr` is false (the GPU canvas
-/// applies it in its shader).
-pub fn display_lut_with(c: &ColorState, doc: &Document, size: usize, include_hdr: bool, display: Option<u32>) -> Result<Option<Lut3d>> {
+/// [`display_lut`] for a window on `display`.
+pub fn display_lut_with(c: &ColorState, doc: &Document, size: usize, display: Option<u32>) -> Result<Option<Lut3d>> {
     let pv = c.proof(doc.id);
     let kind = if pv.enabled { pv.setup.kind } else { ProofKind::Profile };
-    let hdr = if include_hdr { c.hdr_preview(doc) } else { None };
-    if kind == ProofKind::Profile && hdr.is_none() {
+    if kind == ProofKind::Profile {
         return Ok(None);
     }
     let err = |e: photocraft_cms::CmsError| EngineError::Other(format!("colour management: {e}"));
@@ -211,11 +165,7 @@ pub fn display_lut_with(c: &ColorState, doc: &Document, size: usize, include_hdr
     for b in 0..n {
         for g in 0..n {
             for r in 0..n {
-                let mut v = [r as f32 / sc, g as f32 / sc, b as f32 / sc];
-                if let Some(h) = hdr {
-                    v = v.map(|x| h.apply(x));
-                }
-                let o = base(v);
+                let o = base([r as f32 / sc, g as f32 / sc, b as f32 / sc]);
                 data[r + g * n + b * n * n] = [o[0], o[1], o[2], 1.0];
             }
         }
@@ -233,11 +183,6 @@ fn eval3(t: &Transform, v: &[f32]) -> [f32; 3] {
 
 fn has_doc(s: &Session) -> std::result::Result<(), String> {
     s.active().map(|_| ()).ok_or_else(|| "no document open".into())
-}
-
-fn is_32(s: &Session) -> std::result::Result<(), String> {
-    let d = s.active().ok_or("no document open")?;
-    if d.doc.depth.is_float() { Ok(()) } else { Err("32-bit Preview Options apply to 32-bit documents".into()) }
 }
 
 /// Select a simulated proof (`kind`) and turn Proof Colors on. Plates use the working CMYK.
@@ -259,27 +204,6 @@ pub fn set_kind(s: &mut Session, kind: ProofKind) -> Result<Value> {
 fn run_kind(s: &mut Session, id: &str) -> Result<Value> {
     let kind = id.strip_prefix("view.proofSetup.").and_then(ProofKind::from_id).ok_or_else(|| EngineError::UnknownCommand(id.into()))?;
     set_kind(s, kind)
-}
-
-fn preview_32(s: &mut Session, p: &Value) -> Result<Value> {
-    const CMD: &str = "view.thirtyTwoBitPreviewOptions";
-    let id = s.active().ok_or(EngineError::NoDocument)?.doc.id;
-    let mut h = s.color.hdr.get(&id).copied().unwrap_or_default();
-    if let Some(m) = p.get("method").and_then(Value::as_str) {
-        h.highlight_compression = match m {
-            "exposureGamma" | "exposureAndGamma" => false,
-            "highlightCompression" => true,
-            o => return Err(EngineError::BadParams { cmd: CMD.into(), msg: format!("method `{o}` (exposureGamma|highlightCompression)") }),
-        };
-    }
-    if let Some(e) = p.get("exposure").and_then(Value::as_f64) {
-        h.exposure = (e as f32).clamp(-20.0, 20.0);
-    }
-    if let Some(g) = p.get("gamma").and_then(Value::as_f64) {
-        h.gamma = (g as f32).clamp(0.1, 9.99);
-    }
-    s.color.hdr.insert(id, h);
-    Ok(json!({"method": if h.highlight_compression { "highlightCompression" } else { "exposureGamma" }, "exposure": h.exposure, "gamma": h.gamma}))
 }
 
 macro_rules! kind_spec {
@@ -307,16 +231,6 @@ pub fn specs() -> Vec<CommandSpec> {
         kind_spec!("view.proofSetup.legacyMacintoshRgb", "Legacy Macintosh RGB"),
         kind_spec!("view.proofSetup.colorBlindnessProtanopia", "Color Blindness — Protanopia-type"),
         kind_spec!("view.proofSetup.colorBlindnessDeuteranopia", "Color Blindness — Deuteranopia-type"),
-        CommandSpec {
-            id: "view.thirtyTwoBitPreviewOptions",
-            label: "32-bit Preview Options…",
-            menu: &["View"],
-            shortcut: None,
-            params: r##"{"method":"exposureGamma|highlightCompression"="exposureGamma","exposure":-20..20=0,"gamma":0.1..9.99=1}"##,
-            enabled: is_32,
-            run: preview_32,
-            journal: false,
-        },
     ]
 }
 
@@ -411,35 +325,5 @@ mod tests {
         // 0.5^1.8 = 0.287 linear vs 0.214 for sRGB 0.5: the gamma-1.8 display is brighter.
         assert!(mid[0] > 0.52 && mid[0] < 0.62, "{mid:?}");
         assert!(white[0] > 0.99);
-    }
-
-    #[test]
-    fn thirty_two_bit_preview_options() {
-        assert!(Session::new().execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 1})).is_err(), "no document: disabled");
-        // Half-float documents are linear too: the preview applies to them.
-        let mut s = session("rgb", 16);
-        assert!(s.execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 0})).is_ok());
-        let mut s = session("rgb", 32);
-        let d = s.active().unwrap().doc.clone();
-        assert!(s.color.canvas_lut(&d, 5).unwrap().is_none());
-        let r = s.execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 1.0, "gamma": 1.0})).unwrap();
-        assert_eq!(r["exposure"], 1.0);
-        assert!(hdr_active(&s.color, &d));
-        let lut = s.color.display_lut(&d, 5).unwrap();
-        // +1 stop doubles linear light: sRGB 0.25 (0.0508 linear) → 0.1016 linear ≈ 0.354 sRGB.
-        let q = sample(&lut, [1, 1, 1]);
-        assert!((q[0] - 0.354).abs() < 0.02, "{q:?}");
-        assert!(s.color.canvas_lut(&d, 5).unwrap().is_some());
-        // The GPU canvas applies it in its shader: its LUT leaves it out (none for sRGB).
-        assert_eq!(s.color.hdr_preview(&d), Some(HdrPreview { highlight_compression: false, exposure: 1.0, gamma: 1.0 }));
-        assert!(s.color.gpu_canvas_lut(&d, 5).unwrap().is_none());
-        // Highlight Compression: identity mapping, so no LUT.
-        s.execute("view.thirtyTwoBitPreviewOptions", json!({"method": "highlightCompression"})).unwrap();
-        assert!(!hdr_active(&s.color, &d));
-        assert!(s.execute("view.thirtyTwoBitPreviewOptions", json!({"method": "nope"})).is_err());
-        // Clamped ranges.
-        let r = s.execute("view.thirtyTwoBitPreviewOptions", json!({"method": "exposureGamma", "exposure": 99, "gamma": 0})).unwrap();
-        assert_eq!(r["exposure"], 20.0);
-        assert!((r["gamma"].as_f64().unwrap() - 0.1).abs() < 1e-6);
     }
 }

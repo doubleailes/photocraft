@@ -1462,9 +1462,10 @@ fn home_recent(app: &mut PhotocraftApp, ui: &mut egui::Ui, recent: &[String]) {
 const DISPLAY_LUT: usize = 33;
 
 /// Keep the GPU display LUT under `key` (the document's texture or a preview of it) in step with
-/// `doc`'s colour management: document → monitor profile and View › Proof Colors / Gamut
-/// Warning (the 32-bit preview is applied by the canvas shader, see [`hdr_preview`]). Returns the canvas `display` mode (0 none — the identity, e.g. sRGB on
-/// an sRGB monitor —, 1 LUT, 2 LUT + gamut warning).
+/// `doc`'s colour management: the OCIO viewer when on, else document → monitor profile and
+/// View › Proof Colors / Gamut Warning (exposure and gamma are applied by the canvas shader, see
+/// [`viewer_grade`]). Returns the canvas `display` mode (0 none — the identity, e.g. sRGB on
+/// an sRGB monitor —, 1 LUT, 2 LUT + gamut warning, 3 OCIO viewer).
 fn sync_display_lut(app: &mut PhotocraftApp, doc: &photocraft_doc::Document, key: u64, display: Option<u32>) -> u8 {
     let Some(gpu) = app.gpu.clone() else { return 0 };
     let output = display.unwrap_or(0);
@@ -1474,6 +1475,13 @@ fn sync_display_lut(app: &mut PhotocraftApp, doc: &photocraft_doc::Document, key
         && s == sig
     {
         return mode;
+    }
+    if let Ok(cd) = app.session.color.canvas_display_for(doc, display)
+        && let Some(lut) = &cd.viewer
+    {
+        gpu.set_viewer_lut(key, output, lut.size as u32, &lut.to_rgba16f_bytes());
+        gpu.cache_display_lut_signature(key, output, sig, 3);
+        return 3;
     }
     let gamut = app.session.color.proof(doc.id).gamut_warning;
     let mode = match app.session.color.gpu_canvas_lut_for(doc, DISPLAY_LUT, display) {
@@ -1495,9 +1503,9 @@ fn sync_display_lut(app: &mut PhotocraftApp, doc: &photocraft_doc::Document, key
     mode
 }
 
-/// View › 32-bit Preview Options for the GPU canvas shader: (exposure, gamma) when active.
-fn hdr_preview(app: &PhotocraftApp, doc: &photocraft_doc::Document) -> Option<[f32; 2]> {
-    app.session.color.hdr_preview(doc).map(|h| [h.exposure, h.gamma])
+/// The viewer's exposure and gamma for the GPU canvas shader, when not neutral.
+fn viewer_grade(app: &PhotocraftApp) -> Option<[f32; 2]> {
+    app.session.color.viewer.grade()
 }
 
 /// Draw one canvas view and handle its input. `primary` = main window (tools active).
@@ -1566,7 +1574,7 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             view_key: egui::Id::new(("pc-canvas-proxy", ctx.viewport_id(), idx)).value(),
             display: sync_display_lut(app, &doc, key, output),
             output: output.unwrap_or(0),
-            hdr: hdr_preview(app, &doc),
+            grade: viewer_grade(app),
         };
         crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
     } else if !flip && ensure_gpu(app, idx, visible_doc_rect(&xf)) {
@@ -1586,7 +1594,7 @@ pub fn canvas_view(app: &mut PhotocraftApp, ui: &mut egui::Ui, idx: usize, rect:
             view_key: egui::Id::new(("pc-canvas", ctx.viewport_id(), idx)).value(),
             display: sync_display_lut(app, &doc, doc.id.0, output),
             output: output.unwrap_or(0),
-            hdr: hdr_preview(app, &doc),
+            grade: viewer_grade(app),
         };
         crate::gpu_canvas::GpuCanvas::paint(&painter, rect, params);
     } else {

@@ -1,5 +1,5 @@
 //! 16/32-bit documents get an `Rgba16Float` canvas texture (#46): smooth gradients keep more than
-//! 256 levels, 32-bit values above 1.0 survive for View › 32-bit Preview Options, and 8-bit
+//! 256 levels, 32-bit values above 1.0 survive for the viewer exposure (View › Viewer Options), and 8-bit
 //! documents keep their `Rgba8Unorm` texture byte for byte. Skips when there is no GPU adapter or
 //! it can't render to `Rgba16Float`.
 
@@ -240,10 +240,10 @@ fn sixteen_bit_gradient_on_screen() {
 #[test]
 fn thirty_two_bit_preview_exposes_values_above_one() {
     let _gpu = gpu_lock();
-    // A dark 32-bit ramp brightened +4 stops by View › 32-bit Preview Options: with an 8-bit
+    // A dark 32-bit ramp brightened +4 stops by the viewer exposure: with an 8-bit
     // canvas texture its 0..1/16 range has 16 codes (banding); the float texture keeps it smooth.
     let doc = gradient(SampleType::F32, 2048, 1024, 0.0, 1.0 / 16.0);
-    let Some(img) = screen(doc, &[("view.thirtyTwoBitPreviewOptions", json!({"exposure": 4.0, "gamma": 1.0}))], "photocraft-canvas-16f-hdr-ramp.png") else {
+    let Some(img) = screen(doc, &[("view.exposure", json!({"exposure": 4.0}))], "photocraft-canvas-16f-hdr-ramp.png") else {
         return;
     };
     let (n, _) = screen_levels(&img, img.h / 2, 150, 600);
@@ -254,7 +254,7 @@ fn thirty_two_bit_preview_exposes_values_above_one() {
     let mut s = Surface::new(PixelFormat::new(ColorMode::Rgb, SampleType::F32, true));
     s.fill_rect(Rect::new(0, 0, 512, 512), &[2.0, 2.0, 2.0, 1.0]);
     flat.layers.push(Layer::new("bright", LayerContent::Raster(s)));
-    let Some(img) = screen(flat, &[("view.thirtyTwoBitPreviewOptions", json!({"exposure": -3.0, "gamma": 1.0}))], "photocraft-canvas-16f-hdr-flat.png") else {
+    let Some(img) = screen(flat, &[("view.exposure", json!({"exposure": -3.0}))], "photocraft-canvas-16f-hdr-flat.png") else {
         return;
     };
     let got = img.green(img.w * 2 / 5, img.h / 2) as f32;
