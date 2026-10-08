@@ -3,7 +3,7 @@ use photocraft_doc::vector::Subpath;
 
 fn session(depth: u32) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth, "background": "white"})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "depth": depth, "background": "white"}));
     s
 }
 

@@ -99,6 +99,9 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
         let fmt = doc.pixel_format();
         let mode = fmt.mode;
         let shown: Vec<usize> = (0..colors).filter(|k| v.color_visible(*k)).collect();
+        // Shown on screen as is: a linear document's values are encoded for display first.
+        let encode = photocraft_engine::linear_doc::is_linear(doc);
+        let show = |x: f32| if encode { photocraft_color::convert::linear_to_srgb(x.clamp(0.0, 1.0)) } else { x };
         composite(doc, r, factor)
             .into_iter()
             .map(|rgba| {
@@ -106,7 +109,7 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
                 if shown.len() == 1 && !in_color {
                     let x = native[shown[0]];
                     // Ink channels read dark where there is ink.
-                    let g = if mode == ColorMode::Cmyk { 1.0 - x } else { x };
+                    let g = show(if mode == ColorMode::Cmyk { 1.0 - x } else { x });
                     return [g, g, g, 1.0];
                 }
                 for (k, x) in native[..colors].iter_mut().enumerate() {
@@ -116,7 +119,7 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
                     }
                 }
                 let c = to_rgba(&fmt, &native);
-                [c[0], c[1], c[2], 1.0]
+                [show(c[0]), show(c[1]), show(c[2]), 1.0]
             })
             .collect()
     } else {

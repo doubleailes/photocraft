@@ -7,7 +7,7 @@ const DEPTHS: [u32; 3] = [8, 16, 32];
 /// White document with a black 20×20 square at (10, 10) on its Background layer.
 fn session(mode: &str, depth: u32) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 64, "height": 48, "mode": mode, "depth": depth})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "mode": mode, "depth": depth}));
     s.execute("select.rect", json!({"x": 10, "y": 10, "width": 20, "height": 20, "antiAlias": false})).unwrap();
     s.execute("edit.fill", json!({"color": "#000000"})).unwrap();
     s.execute("select.deselect", json!({})).unwrap();

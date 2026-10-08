@@ -124,9 +124,11 @@ fn statistics_makes_a_stack_mode_smart_object() {
     assert_eq!(d.layers.len(), 1);
     let LayerContent::Smart(so) = &d.layers[0].content else { panic!("not a smart object") };
     assert_eq!(so.stack_mode, Some(photocraft_doc::StackMode::Mean));
-    // Mean of 20, 60, 100 = 60.
+    // The files open linear: the mean of 20, 60 and 100 in linear light.
     let px = photocraft_compose::flatten(d).px[0];
-    assert!((px[0] * 255.0 - 60.0).abs() < 1.5, "{px:?}");
+    let lin = |v: f32| ((v / 255.0 + 0.055) / 1.055).powf(2.4);
+    let mean = (lin(20.0) + lin(60.0) + lin(100.0)) / 3.0;
+    assert!((px[0] - mean).abs() < 2e-3, "{px:?} vs {mean}");
     assert!(s.execute("file.scripts.statistics", json!({"mode": "average", "input": dir})).is_err());
 }
 

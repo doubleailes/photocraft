@@ -58,7 +58,8 @@ fn camera_raw_opens_as_16_bit_with_notes() {
     let r = open_bytes_as(&mut s, "IMG_0001.dng", &spec.build(), None, None).unwrap();
     assert!(r["warnings"].as_array().is_some_and(|w| w.iter().any(|m| m.as_str().is_some_and(|m| m.contains("DNG")))), "{r}");
     assert_eq!((doc(&s).size.width, doc(&s).size.height), (24, 16));
-    assert_eq!(doc(&s).depth, photocraft_color::SampleType::U16);
+    // Developed at 16 bits, opened linear half float (saves back as 16-bit).
+    assert_eq!((doc(&s).depth, doc(&s).source_depth), (photocraft_color::SampleType::F16, Some(photocraft_color::SampleType::U16)));
     // Damaged raw data is an error, not a crash.
     let mut bad = spec.build();
     bad.truncate(bad.len() / 2);
@@ -105,7 +106,8 @@ fn save_a_copy_keeps_path_and_dirty_state() {
     assert!(s.active().unwrap().is_dirty());
     let back = photocraft_io::import("copy.psd", &std::fs::read(&out).unwrap()).unwrap().document;
     assert_eq!(back.layers.len(), 2);
-    assert_eq!(back.depth, photocraft_color::SampleType::U16);
+    // PSD has no half float: a half-float document is saved as 32-bit float.
+    assert_eq!(back.depth, photocraft_color::SampleType::F32);
     // Flattened copy.
     let flat = join(&dir, "flat.psd");
     s.execute("file.saveACopy", json!({"path": flat, "layers": false})).unwrap();
@@ -181,7 +183,8 @@ fn rotated_jpegs_open_and_place_upright() {
     let mut s = Session::new();
     s.execute("file.openAs", json!({"path": path, "as": "jpg"})).unwrap();
     assert_eq!((doc(&s).size.width, doc(&s).size.height), (20, 40));
-    assert!(composite(&s, 10, 5)[0] > 0.8 && composite(&s, 10, 35)[2] > 0.8, "red on top, blue below");
+    // Linear values: JPEG's not-quite-saturated red and blue sit lower than when encoded.
+    assert!(composite(&s, 10, 5)[0] > 0.6 && composite(&s, 10, 35)[2] > 0.6, "red on top, blue below");
     // Placed as a smart object: upright too, and it renders upright from its embedded bytes.
     let mut s = session(100, 100, 8);
     let r = s.execute("file.placeEmbedded", json!({"path": path})).unwrap();

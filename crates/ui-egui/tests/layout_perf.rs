@@ -209,7 +209,8 @@ fn the_move_preview_is_what_the_move_commits() {
         assert!(dmg.contains_rect(&b0) && dmg.contains_rect(&b0.translate(13, -7).intersect(&before.bounds())), "{dmg:?} vs {b0:?}");
         let (a, b) = (photocraft_compose::flatten(&preview), photocraft_compose::flatten(&after.doc));
         let worst = a.px.iter().zip(&b.px).flat_map(|(p, q)| (0..4).map(move |c| (p[c] * p[3] - q[c] * q[3]).abs())).fold(0.0f32, f32::max);
-        assert!(worst <= 2.0 / 255.0, "{id:?}: preview differs from the commit by {}/255", worst * 255.0);
+        let kind = before.layer(id).map_or("?", |l| l.content.kind_name());
+        assert!(worst <= 2.0 / 255.0, "{id:?} ({kind}): preview differs from the commit by {}/255", worst * 255.0);
         s.execute("edit.undo", json!({})).expect("undo");
     }
 }

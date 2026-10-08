@@ -428,6 +428,8 @@ fn load_files_into_stack_as_smart_object_then_median() {
     assert!(matches!(doc(&s).layers[0].content, LayerContent::Smart(_)));
     s.execute("layer.smartObjects.stackMode.median", json!({})).unwrap();
     let px = photocraft_compose::render(doc(&s), Rect::from_xywh(2, 2, 1, 1)).px[0];
-    assert!((px[0] - 0.2).abs() < 2.0 / 255.0, "{px:?}");
+    // The files open linear: the median is 0.2 in linear light.
+    let lin = ((0.2f32 + 0.055) / 1.055).powf(2.4);
+    assert!((px[0] - lin).abs() < 1e-3, "{px:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -205,7 +205,8 @@ pub fn document_to_image(doc: &Document, warnings: &mut Vec<String>) -> Result<I
                     match cs {
                         CSample::U8 => out.push((v.clamp(0.0, 1.0) * 255.0).round() as u8),
                         CSample::U16 => out.extend_from_slice(&((v.clamp(0.0, 1.0) * 65535.0).round() as u16).to_ne_bytes()),
-                        CSample::F16 | CSample::F32 => out.extend_from_slice(&v.to_ne_bytes()),
+                        CSample::F16 => out.extend_from_slice(&half::f16::from_f32(v).to_ne_bytes()),
+                        CSample::F32 => out.extend_from_slice(&v.to_ne_bytes()),
                     }
                 };
                 for p in &band.px[range] {
@@ -302,7 +303,7 @@ pub fn export_flat(doc: &Document, format: Format, opts: &ExportOptions) -> Resu
         img = cmyk_image_to_srgb(&img)?;
         warnings.push(format!("CMYK converted to sRGB for {format:?} through the document's colour profile"));
     }
-    if let Some(encoded) = encode_linear(&img, doc, format)? {
+    if let Some(encoded) = encode_linear(&img, doc, format, &mut warnings)? {
         img = encoded;
     }
     if matches!(format, Format::OpenExr | Format::Hdr) {
@@ -381,13 +382,14 @@ fn convert_rgb(img: &Image, dst: &photocraft_cms::Profile, intent: photocraft_cm
     Ok(Some(out.with_icc(None)))
 }
 
-/// A linear document (linear sRGB or linear gray) written to an integer format, or to any
-/// non-HDR format when it came from an integer file: encoded to sRGB / sGray and stored at the
-/// source file's depth (8-bit for documents created here), so opening and saving a PNG, JPEG or
-/// TIFF gives back the same kind of file. `None` when nothing needs encoding.
-fn encode_linear(img: &Image, doc: &Document, format: Format) -> Result<Option<Image>, IoError> {
+/// A linear float document (linear sRGB or linear gray) written to an integer format, or to
+/// any non-HDR format when it came from an integer file: encoded to sRGB / sGray and stored at
+/// the source file's depth (8-bit for documents created here), so opening and saving a PNG, JPEG
+/// or TIFF gives back the same kind of file. Untagged formats get the values untagged (what an
+/// untagged file means). `None` when nothing needs encoding.
+fn encode_linear(img: &Image, doc: &Document, format: Format, warnings: &mut Vec<String>) -> Result<Option<Image>, IoError> {
     use photocraft_cms::{Builtin, Intent, Profile, Transform};
-    if matches!(format, Format::OpenExr | Format::Hdr) {
+    if matches!(format, Format::OpenExr | Format::Hdr) || !img.sample_type().is_float() {
         return Ok(None);
     }
     let (linear, dst) = if img.layout().is_rgb() {
@@ -420,6 +422,10 @@ fn encode_linear(img: &Image, doc: &Document, format: Format) -> Result<Option<I
         t.apply(&mut vals, stride);
         vals
     })?;
+    if !format.caps().icc {
+        warnings.push(format!("colours converted to sRGB; {format:?} can't embed the document's colour profile"));
+        return Ok(Some(out.with_icc(None)));
+    }
     Ok(Some(out.with_icc(Some(dst.to_bytes().to_vec()))))
 }
 

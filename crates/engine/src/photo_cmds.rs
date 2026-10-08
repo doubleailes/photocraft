@@ -916,8 +916,10 @@ mod tests {
             let at = |x: i32, y: i32| comp.px[(y * comp.rect.width() as i32 + x) as usize];
             let gains = r["photometric"]["gains"].as_array().unwrap();
             assert!(gains[1][0].as_f64().unwrap() > gains[0][0].as_f64().unwrap() * 1.05, "{r}");
+            // The result opens linear: compare in linear light.
             let probe = at(160, 100);
-            let truth = sc[110 * sw + 160];
+            let lin = |v: f32| if v <= 0.04045 { v / 12.92 } else { ((v + 0.055) / 1.055).powf(2.4) };
+            let truth = sc[110 * sw + 160].map(lin);
             assert!((probe[1] - truth[1]).abs() < 0.08, "{probe:?} vs {truth:?}");
         }
         // Perspective + no blending: plain layers, no masks.
@@ -1016,7 +1018,8 @@ mod tests {
                 .unwrap();
             assert_eq!(r["exposureSource"], "params");
             let d = &s.active().unwrap().doc;
-            assert_eq!(d.depth, SampleType::U8);
+            // Opened linear like any 8-bit image, saving back as 8-bit.
+            assert_eq!((d.depth, d.source_depth), (SampleType::F16, Some(SampleType::U8)));
             let out = r["document"].as_u64().unwrap() as usize;
             s.close(out);
         }

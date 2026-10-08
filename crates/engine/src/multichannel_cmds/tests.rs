@@ -3,7 +3,7 @@ use photocraft_color::SampleType;
 
 fn session(mode: &str, depth: u64) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 12, "height": 8, "depth": depth, "mode": mode})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 12, "height": 8, "depth": depth, "mode": mode}));
     s.edit("setup", |doc, active| {
         let b = doc.bounds();
         let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();

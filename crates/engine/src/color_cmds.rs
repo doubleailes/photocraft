@@ -677,7 +677,11 @@ pub fn convert_mode(s: &mut Session, mode: ColorMode, p: &Value) -> Result<Value
     }
     let dst = match p.get("profile").and_then(Value::as_str) {
         Some(spec) => s.color.resolve(spec, Some(doc), Some(mode))?,
-        None => s.color.working(mode),
+        // Float RGB and gray documents are linear (`linear_doc`), whatever mode they come from.
+        None => match crate::linear_doc::linear_profile(mode).filter(|_| doc.depth.is_float()) {
+            Some(lin) => Arc::new(lin.clone()),
+            None => s.color.working(mode),
+        },
     };
     if space_mode(dst.color_space)
         != Some(match mode {
@@ -941,7 +945,11 @@ impl Session {
     /// (`action`, `mismatch`, `ask`, `linearized`) the UI can turn into a prompt.
     pub fn open_document(&mut self, mut doc: Document, path: Option<String>) -> (usize, Value) {
         let report = self.color.open_policy(&mut doc);
-        let report = merge(report, crate::linear_doc::linearize_import(&mut doc));
+        let lin = crate::linear_doc::linearize_import(&mut doc);
+        // A linearised document no longer holds its embedded profile's values: the mismatch
+        // prompt (keep, convert, discard) has nothing left to decide.
+        let report = if lin["linearized"] == true { merge(report, json!({"ask": false})) } else { report };
+        let report = merge(report, lin);
         (self.add_document(doc, path), report)
     }
 }
@@ -1220,8 +1228,10 @@ mod tests {
 mod settings_tests {
     use super::*;
 
+    /// A 32-bit file tagged `spec`: float files keep their values and profile on open, so the
+    /// Color Settings policies show as they act (integer files are linearised afterwards).
     fn tagged(spec: &str) -> Document {
-        let mut d = Document::with_background("t", photocraft_doc::Size::new(8, 8), ColorMode::Rgb, SampleType::U8, Color::rgba(0.2, 0.6, 0.9, 1.0));
+        let mut d = Document::with_background("t", photocraft_doc::Size::new(8, 8), ColorMode::Rgb, SampleType::F32, Color::rgba(0.2, 0.6, 0.9, 1.0));
         d.icc_profile = Some(Builtin::from_id(spec).unwrap().profile().to_bytes());
         d
     }
@@ -1313,12 +1323,19 @@ mod settings_tests {
     fn mode_conversion_uses_working_spaces() {
         let mut s = Session::new();
         s.execute("edit.colorSettings", json!({"workingRgb": "rec2020"})).unwrap();
-        for depth in [8, 16, 32] {
-            s.execute("file.new", json!({"width": 8, "height": 8, "mode": "gray", "depth": depth})).unwrap();
+        // Integer documents (no longer made by New or Open, see `linear_doc`).
+        for depth in [SampleType::U8, SampleType::U16] {
+            s.add_document(Document::with_background("g", photocraft_doc::Size::new(8, 8), ColorMode::Grayscale, depth, Color::gray(0.5)), None);
             s.execute("image.mode.rgb", json!({})).unwrap();
             let d = &s.active().unwrap().doc;
             assert_eq!(d.mode, ColorMode::Rgb);
-            assert!(desc(d).unwrap().contains("2020"), "depth {depth}: {:?}", desc(d));
+            assert!(desc(d).unwrap().contains("2020"), "depth {depth:?}: {:?}", desc(d));
+        }
+        // Float RGB and gray documents are linear whatever the working space.
+        for depth in [16, 32] {
+            s.execute("file.new", json!({"width": 8, "height": 8, "mode": "gray", "depth": depth})).unwrap();
+            s.execute("image.mode.rgb", json!({})).unwrap();
+            assert!(crate::linear_doc::is_linear(&s.active().unwrap().doc), "depth {depth}");
         }
         // "working" specs follow the settings too.
         let p = s.color.resolve("working-rgb", None, None).unwrap();

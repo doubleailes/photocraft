@@ -218,7 +218,8 @@ mod tests {
 
     fn doc() -> Document {
         let mut s = photocraft_engine::Session::new();
-        s.execute("file.new", json!({"width": 2400, "height": 1500, "resolution": 72, "background": "white"})).unwrap();
+        // An 8-bit document, as Photoshop shows it.
+        photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": 2400, "height": 1500, "resolution": 72, "background": "white"}));
         (*s.active().unwrap().doc).clone()
     }
 

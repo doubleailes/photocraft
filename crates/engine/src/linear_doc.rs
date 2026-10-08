@@ -15,7 +15,7 @@ use std::sync::Arc;
 
 use photocraft_cms::{Builtin, ColorSpace, Intent, Profile, Transform, TransformOptions};
 use photocraft_color::{Color, ColorMode, SampleType};
-use photocraft_doc::{Document, Effect, Fill, FxPaint};
+use photocraft_doc::{Document, Effect, Fill, FxPaint, Pattern};
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
 use serde_json::{Value, json};
@@ -79,8 +79,22 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
     set_document_depth(&mut work, SampleType::F32);
     convert_document(&mut work, lin, Intent::RelativeColorimetric, false)?;
     set_document_depth(&mut work, depth);
+    // Shapes re-render as any edit would (their anti-aliased edges now blend in linear light);
+    // text and smart objects keep their converted pixels, which may be Photoshop's own.
+    let snapshot = work.clone();
+    refresh_shapes(&snapshot, &mut work.layers);
     *doc = work;
     Ok(true)
+}
+
+fn refresh_shapes(doc: &Document, layers: &mut [photocraft_doc::Layer]) {
+    for l in layers {
+        match &mut l.content {
+            photocraft_doc::LayerContent::Shape(sh) if sh.cache.is_some() => crate::vector_cmds::refresh_shape(doc, sh),
+            photocraft_doc::LayerContent::Group(g) => refresh_shapes(doc, &mut g.children),
+            _ => {}
+        }
+    }
 }
 
 /// Re-encodes a linear document in `dst` (its depth kept), for algorithms that work on
@@ -146,7 +160,17 @@ impl ColorConv {
         let Some(t) = &self.0 else { return c };
         let mut out = [0.0f32; 16];
         t.eval(&c[..3], &mut out);
-        [out[0], out[1], out[2], c[3]]
+        // Round-off through the profiles' matrices: pure primaries, black and white stay exact.
+        let snap = |v: f32| {
+            if v.abs() < 1e-6 {
+                0.0
+            } else if (v - 1.0).abs() < 1e-6 {
+                1.0
+            } else {
+                v
+            }
+        };
+        [snap(out[0]), snap(out[1]), snap(out[2]), c[3]]
     }
 
     /// [`Self::apply`] for an RGB [`Color`] (other modes are returned as they are).
@@ -290,6 +314,18 @@ pub fn colors_in(p: &Value, keys: &[&str], to_doc: &ColorConv) -> Value {
     out
 }
 
+/// `pat` as `doc` holds it: an integer (encoded) RGB or gray pattern is converted to linear half
+/// float for a linear document. Float patterns are linear already; the id is kept.
+pub fn pattern_for(pat: &Pattern, doc: &Document) -> Pattern {
+    let fmt = pat.surface.format();
+    let (Some(lin), Some(src)) = (linear_profile(fmt.mode), photocraft_cms::builtin::default_for(mode_space(fmt.mode))) else { return pat.clone() };
+    if fmt.sample.is_float() || !is_linear(doc) {
+        return pat.clone();
+    }
+    let wide = convert_pixels(&pat.surface, src, lin);
+    Pattern { surface: wide.convert(fmt.with_sample(SampleType::F16)), ..pat.clone() }
+}
+
 impl Session {
     /// The profile of the clipboard's pixels: the one recorded at copy, else (an image from
     /// another app) the working space of its mode.
@@ -370,6 +406,43 @@ impl Session {
             None => c,
         }
     }
+}
+
+/// File › New as it was before linear documents: an untagged document of `depth` bits (8,
+/// 16 or 32, default 8) whose colours are used as given. Only for tests of the integer paths,
+/// which half-float step 3 removes. Returns the document index.
+#[doc(hidden)]
+pub fn legacy_new(s: &mut Session, p: &Value) -> usize {
+    use photocraft_doc::{Layer, Size};
+    let num = |k: &str, d: u32| p.get(k).and_then(Value::as_f64).map_or(d, |v| v.round().clamp(1.0, 300_000.0) as u32);
+    let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("rgb") {
+        "gray" | "grayscale" => ColorMode::Grayscale,
+        "cmyk" => ColorMode::Cmyk,
+        "lab" => ColorMode::Lab,
+        _ => ColorMode::Rgb,
+    };
+    let depth = match p.get("depth").and_then(Value::as_u64).unwrap_or(8) {
+        16 => SampleType::U16,
+        32 => SampleType::F32,
+        _ => SampleType::U8,
+    };
+    let (name, size) = (p.get("name").and_then(Value::as_str).unwrap_or("Untitled"), Size::new(num("width", 1920), num("height", 1080)));
+    let bg = s.tools.background;
+    let mut doc = match p.get("background").and_then(Value::as_str).unwrap_or("white") {
+        "backgroundColor" => Document::with_background(name, size, mode, depth, Color::rgba(bg[0], bg[1], bg[2], 1.0)),
+        "transparent" => {
+            let mut d = Document::new(name, size, mode, depth);
+            d.layers.push(Layer::raster("Layer 1", d.pixel_format()));
+            d
+        }
+        "black" => Document::with_background(name, size, mode, depth, Color::BLACK),
+        hex => {
+            let c = color_value(&json!(hex)).unwrap_or([1.0; 4]);
+            Document::with_background(name, size, mode, depth, Color::rgba(c[0], c[1], c[2], c[3]))
+        }
+    };
+    doc.resolution_dpi = p.get("resolution").and_then(Value::as_f64).unwrap_or(72.0) as f32;
+    s.add_document(doc, None)
 }
 
 #[cfg(test)]

@@ -149,7 +149,7 @@ mod tests {
 
     fn session() -> Session {
         let mut s = Session::new();
-        s.execute("file.new", json!({"width": 20, "height": 10})).unwrap();
+        crate::linear_doc::legacy_new(&mut s, &json!({"width": 20, "height": 10}));
         s
     }
 

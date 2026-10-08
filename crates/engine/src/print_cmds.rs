@@ -207,6 +207,13 @@ pub fn print_pdf(page: &PrintPage) -> Vec<u8> {
 /// The flattened, colour-handled document as 8-bit samples in its print colour space.
 fn print_image(doc: &Document, p: &Value, cmd: &str) -> Result<(PrintImage, Value)> {
     let mut t = Session::new();
+    let mut doc = doc.clone();
+    // 8-bit print data holds encoded values: a linear document prints as untagged sRGB / sGray.
+    if let Some(default) = photocraft_cms::builtin::default_for(crate::color_cmds::mode_space(doc.mode)).filter(|_| crate::linear_doc::is_linear(&doc)) {
+        crate::linear_doc::to_encoded(&mut doc, default)?;
+        doc.icc_profile = None;
+    }
+    let doc = &doc;
     t.add_document(doc.clone(), None);
     let handling = p.get("colorHandling").and_then(Value::as_str).unwrap_or("printerManages");
     let mut info = json!({"colorHandling": handling});

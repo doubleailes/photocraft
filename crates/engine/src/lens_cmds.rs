@@ -158,6 +158,11 @@ fn rgba_region(surf: &Surface, area: Rect) -> Vec<[f32; 4]> {
     v
 }
 
+/// Linear RGBA → sRGB-encoded, in place (alpha untouched): what Camera Raw develops.
+pub fn encode_srgb(px: &mut [[f32; 4]]) {
+    px.iter_mut().for_each(|q| (0..3).for_each(|c| q[c] = photocraft_color::convert::linear_to_srgb(q[c])));
+}
+
 /// Camera Raw on a surface over `area` (RGB / Gray via RGBA, at the surface's depth).
 pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw) -> Surface {
     let area = area.intersect(&surf.content_bounds().union(&area));
@@ -167,7 +172,16 @@ pub fn camera_raw_surface(surf: &Surface, area: Rect, p: &CameraRaw) -> Surface 
     let fmt = surf.format();
     let (w, h) = (area.width() as usize, area.height() as usize);
     let mut px = rgba_region(surf, area);
-    camera_raw::develop(&mut px, w, h, p, fmt.sample.is_float());
+    // The develop pipeline works on sRGB-encoded values; float documents are linear, so they
+    // are encoded around it (overrange values survive both ways).
+    let linear = fmt.sample.is_float();
+    if linear {
+        encode_srgb(&mut px);
+    }
+    camera_raw::develop(&mut px, w, h, p, linear);
+    if linear {
+        px.iter_mut().for_each(|q| (0..3).for_each(|c| q[c] = photocraft_color::convert::srgb_to_linear(q[c])));
+    }
     let n = fmt.channels();
     let orig = surf.read_region(area);
     let mut data = vec![0.0f32; w * h * n];

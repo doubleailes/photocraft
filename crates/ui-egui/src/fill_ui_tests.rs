@@ -37,7 +37,8 @@ fn every_contents_option_fills() {
         ("foreground", [1.0, 0.0, 0.0, 1.0]),
         ("background", [0.0, 0.0, 1.0, 1.0]),
         ("black", [0.0, 0.0, 0.0, 1.0]),
-        ("gray", [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]),
+        // 50% Gray is a picked colour: linear in the (linear) document.
+        ("gray", [0.21586, 0.21586, 0.21586, 1.0]),
         ("white", [1.0; 4]),
     ] {
         fill(&mut app, json!({ "contents": contents })).unwrap();
@@ -56,7 +57,8 @@ fn every_contents_option_fills() {
     app.run("select.rect", json!({"x": 15, "y": 10, "width": 6, "height": 6})).unwrap();
     fill(&mut app, json!({"contents": "white"})).unwrap();
     fill(&mut app, json!({"contents": "contentAware", "colorAdaptation": false})).unwrap();
-    assert!(close(px(&app, 17, 12), [0.2, 0.4, 0.6, 1.0]), "{:?}", px(&app, 17, 12));
+    // #336699 in the linear document's values.
+    assert!(close(px(&app, 17, 12), [0.03310, 0.13287, 0.31855, 1.0]), "{:?}", px(&app, 17, 12));
     // Each fill is one history step.
     assert_eq!(app.session.active().unwrap().history.past_len(), 12);
 }

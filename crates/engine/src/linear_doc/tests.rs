@@ -54,6 +54,16 @@ fn opening_an_8_bit_file_gives_linear_half_float_and_records_the_source_depth() 
 }
 
 #[test]
+fn a_linearised_file_with_another_profile_does_not_ask_what_to_do() {
+    let mut s = Session::new();
+    let mut d = ramp_doc(SampleType::U8, 16);
+    d.icc_profile = Some(Builtin::AdobeRgbCompat.profile().to_bytes());
+    let (_, r) = s.open_document(d, None);
+    assert_eq!((r["mismatch"].as_bool(), r["ask"].as_bool(), r["linearized"].as_bool()), (Some(true), Some(false), Some(true)));
+    assert!(is_linear(&s.active().unwrap().doc));
+}
+
+#[test]
 fn every_8_bit_value_survives_open_and_save_as_png() {
     let original = ramp_doc(SampleType::U8, 256);
     let mut doc = original.clone();

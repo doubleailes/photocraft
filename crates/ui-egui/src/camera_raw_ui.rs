@@ -249,6 +249,12 @@ fn open_pixels(
             proxy[py * pw + x] = [a[0] / a[4], a[1] / a[4], a[2] / a[4], a[3] / a[4]];
         }
     }
+    // Float (linear) documents develop sRGB-encoded, as the engine does (`camera_raw_surface`):
+    // the proxy, its preview and its histograms hold encoded values.
+    let float = surf.format().sample.is_float();
+    if float {
+        photocraft_engine::lens_cmds::encode_srgb(&mut proxy);
+    }
     // Coverage at the centre of each proxy block.
     let sample = |value: &dyn Fn(i32, i32) -> f32| {
         (0..ph)
@@ -261,7 +267,8 @@ fn open_pixels(
         Coverage::Mask(mask) => Some(sample(&|x, y| mask.value(x, y))),
         Coverage::None => None,
     };
-    let source = photocraft_engine::color_cmds::composite_profile(&st.doc);
+    let source =
+        if float { std::sync::Arc::new(photocraft_cms::Builtin::Srgb.profile().clone()) } else { photocraft_engine::color_cmds::composite_profile(&st.doc) };
     let lab_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::LabD50.profile(), Default::default()).map_err(|e| e.to_string())?;
     let scope_transform = photocraft_cms::cached(&source, photocraft_cms::Builtin::Srgb.profile(), Default::default()).map_err(|e| e.to_string())?;
     if let Some(saved) = app.session.prefs().dialogs.get("filter.cameraRaw.scope")
@@ -277,7 +284,6 @@ fn open_pixels(
     if selection.is_none() {
         app.ui.camera_raw_scope.selected_region = false;
     }
-    let float = surf.format().sample.is_float();
     let mut d = CameraRawDialog {
         layer,
         layer_name: name,

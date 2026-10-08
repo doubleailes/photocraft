@@ -326,7 +326,7 @@ mod tests {
 
     fn session(mode: &str, depth: u32) -> Session {
         let mut s = Session::new();
-        s.execute("file.new", json!({"width": 8, "height": 8, "mode": mode, "depth": depth})).unwrap();
+        crate::linear_doc::legacy_new(&mut s, &json!({"width": 8, "height": 8, "mode": mode, "depth": depth}));
         s
     }
 
