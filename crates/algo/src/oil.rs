@@ -8,7 +8,6 @@
 //! bristle streaks, which together with the smoothed luminance form a height
 //! map shaded by a directional light.
 
-use photocraft_color::ColorMode;
 use photocraft_geom::Rect;
 
 use crate::Ctx;
@@ -156,12 +155,9 @@ pub(crate) fn oil_paint(src: &Image, out: Rect, ctx: &Ctx, spec: &OilSpec) -> Ve
     };
     let amp = spec.bristle_detail.clamp(0.0, 10.0) / 10.0;
     let shine = spec.shine.clamp(0.0, 10.0) / 10.0;
-    let sub = ctx.mode == ColorMode::Cmyk;
-    let lab = ctx.mode == ColorMode::Lab;
     let height = |rx: usize, ry: usize| -> f32 {
         let o = (ry * rw + rx) * n;
         let l = col[o..o + cc].iter().sum::<f32>() / cc as f32;
-        let l = if sub { 1.0 - l } else { l };
         l * 2.0 + bristle[ry * rw + rx] * amp * 6.0
     };
     let flat_spec = half[2].powf(40.0);
@@ -187,9 +183,8 @@ pub(crate) fn oil_paint(src: &Image, out: Rect, ctx: &Ctx, spec: &OilSpec) -> Ve
                 let ndh = ((nv[0] * half[0] + nv[1] * half[1] + nv[2] * half[2]) / m).max(0.0);
                 let shade = 1.0 + (ndl - light[2]) * 1.2;
                 let spec_v = shine * (ndh.powf(40.0) - flat_spec).max(0.0) * 0.8;
-                let chans = if lab { 1 } else { cc };
-                for v in px.iter_mut().take(chans) {
-                    *v = if sub { 1.0 - ((1.0 - *v) * shade + spec_v) } else { *v * shade + spec_v };
+                for v in px.iter_mut().take(cc) {
+                    *v = *v * shade + spec_v;
                 }
             }
             res.extend_from_slice(&px[..n]);

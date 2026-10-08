@@ -9,7 +9,7 @@ use photocraft_color::ColorMode;
 use photocraft_geom::Rect;
 
 use crate::Ctx;
-use crate::fxutil::{MAXC, box_blur_n, gauss_blur_n, rgba, set_rgba};
+use crate::fxutil::{MAXC, box_blur_n, gauss_blur_n};
 use crate::image::Image;
 
 pub(crate) struct DenoiseSpec {
@@ -68,14 +68,10 @@ pub(crate) fn reduce_noise(src: &Image, out: Rect, ctx: &Ctx, spec: &DenoiseSpec
     enum Model {
         Gray,
         Ycc,
-        Lab,
-        ViaRgb,
     }
     let model = match ctx.mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => Model::Gray,
+        ColorMode::Grayscale => Model::Gray,
         ColorMode::Rgb => Model::Ycc,
-        ColorMode::Lab => Model::Lab,
-        _ => Model::ViaRgb,
     };
     let mut yv = vec![0.0f32; len];
     let mut c1 = vec![0.0f32; if model == Model::Gray { 0 } else { len }];
@@ -88,13 +84,8 @@ pub(crate) fn reduce_noise(src: &Image, out: Rect, ctx: &Ctx, spec: &DenoiseSpec
         }
         match model {
             Model::Gray => *yy = px[0],
-            Model::Lab => {
-                *yy = px[0];
-                c1[i] = px[1];
-                c2[i] = px[2];
-            }
-            Model::Ycc | Model::ViaRgb => {
-                let c = if model == Model::Ycc { [px[0], px[1], px[2], 1.0] } else { rgba(ctx, &px[..n]) };
+            Model::Ycc => {
+                let c = [px[0], px[1], px[2]];
                 let l = 0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2];
                 *yy = l;
                 c1[i] = c[2] - l;
@@ -156,23 +147,13 @@ pub(crate) fn reduce_noise(src: &Image, out: Rect, ctx: &Ctx, spec: &DenoiseSpec
         let k = ((y - win.y0) as usize) * ww + (x - win.x0) as usize;
         match model {
             Model::Gray => p[0] = yv[k],
-            Model::Lab => {
-                p[0] = yv[k];
-                p[1] = c1[k];
-                p[2] = c2[k];
-            }
-            Model::Ycc | Model::ViaRgb => {
+            Model::Ycc => {
                 let l = yv[k];
                 let (b, r) = (c1[k] + l, c2[k] + l);
                 let g = (l - 0.299 * r - 0.114 * b) / 0.587;
-                if model == Model::Ycc {
-                    p[0] = r;
-                    p[1] = g;
-                    p[2] = b;
-                } else {
-                    let a = if ctx.alpha { p[n - 1] } else { 1.0 };
-                    set_rgba(ctx, p, [r, g, b, a]);
-                }
+                p[0] = r;
+                p[1] = g;
+                p[2] = b;
             }
         }
     }

@@ -9,7 +9,7 @@ use std::sync::Arc;
 use photocraft_color::{ColorMode, PixelFormat, SampleType};
 use photocraft_doc::{Document, Pattern};
 use photocraft_geom::Rect;
-use photocraft_psd::patterns::{PsdPattern, block_key, mode_channels, parse_pattern_block, write_pattern_block};
+use photocraft_psd::patterns::{PsdPattern, block_key, parse_pattern_block, write_pattern_block};
 use photocraft_raster::Surface;
 
 use crate::pixels::{deinterleave, interleave, max_sample, psd_depth, sample_for_depth, zero_sample};
@@ -20,13 +20,12 @@ pub const PATTERN_KEYS: [[u8; 4]; 3] = [*b"Patt", *b"Pat2", *b"Pat3"];
 fn psd_mode(m: ColorMode) -> u32 {
     match m {
         ColorMode::Grayscale => 1,
-        ColorMode::Cmyk => 4,
-        ColorMode::Lab => 9,
-        _ => 3,
+        ColorMode::Rgb => 3,
     }
 }
 
-/// A PSD pattern as a document pattern (indexed patterns become RGB through their palette).
+/// A PSD pattern as a document pattern: indexed patterns become RGB through their palette, CMYK
+/// and Lab ones through [`crate::native::Native`].
 pub fn from_psd(p: &PsdPattern) -> Option<Pattern> {
     let (w, h) = (p.width as usize, p.height as usize);
     if w == 0 || h == 0 {
@@ -42,6 +41,11 @@ pub fn from_psd(p: &PsdPattern) -> Option<Pattern> {
     } else {
         (p.channels.clone(), p.depth)
     };
+    let native = match p.mode {
+        4 => Some(crate::native::Native::cmyk(None)),
+        9 => Some(crate::native::Native::Lab),
+        _ => None,
+    };
     let (mode, channels) = match p.mode {
         1 | 8 => (ColorMode::Grayscale, channels),
         2 => {
@@ -50,53 +54,50 @@ pub fn from_psd(p: &PsdPattern) -> Option<Pattern> {
             let ch: Vec<Vec<u8>> = (0..3).map(|c| idx.iter().map(|i| pal.get(usize::from(*i) * 3 + c).copied().unwrap_or(0)).collect()).collect();
             (ColorMode::Rgb, ch)
         }
-        4 => (ColorMode::Cmyk, channels),
-        9 => (ColorMode::Lab, channels),
-        3 => (ColorMode::Rgb, channels),
+        3 | 4 | 9 => (ColorMode::Rgb, channels),
         _ => (ColorMode::Grayscale, channels.into_iter().take(1).collect()),
     };
     let s = sample_for_depth(depth);
     let fmt = PixelFormat::new(mode, s, p.alpha.is_some());
-    let cc = mode_channels(psd_mode(mode));
+    let cc = native.as_ref().map_or(mode.color_channels(), crate::native::Native::channels);
     if channels.len() < cc {
         return None;
     }
     let mut refs: Vec<Option<&[u8]>> = channels.iter().take(cc).map(|c| Some(c.as_slice())).collect();
     let mut fill = vec![zero_sample(s); cc];
-    let mut invert = vec![mode == ColorMode::Cmyk; cc];
+    let mut invert = vec![p.mode == 4; cc];
     if let Some(a) = &p.alpha {
         refs.push(Some(a.as_slice()));
         fill.push(max_sample(s));
         invert.push(false);
     }
     let mut bytes = interleave(&refs, &fill, w * h, s, &invert);
-    if mode == ColorMode::Lab && s == SampleType::U16 {
-        crate::pixels::lab16_chroma(&mut bytes, refs.len(), true);
-    }
-    let surface = Surface::from_interleaved(fmt, Rect::new(0, 0, w as i32, h as i32), &bytes);
+    let rect = Rect::new(0, 0, w as i32, h as i32);
+    let surface = match &native {
+        Some(native) => {
+            if p.mode == 9 && s == SampleType::U16 {
+                crate::pixels::lab16_chroma(&mut bytes, refs.len(), true);
+            }
+            let mut out = Surface::new(fmt);
+            out.write_region(rect, &native.to_rgb(&bytes, s, p.alpha.is_some()));
+            out
+        }
+        None => Surface::from_interleaved(fmt, rect, &bytes),
+    };
     Some(Pattern { id: p.id.clone(), name: p.name.clone(), width: p.width, height: p.height, surface })
 }
 
 /// A document pattern as a PSD pattern (its own depth and colour model; other models as RGB).
 pub fn to_psd(p: &Pattern) -> PsdPattern {
     let f = p.surface.format();
-    let mode = match f.mode {
-        ColorMode::Grayscale | ColorMode::Rgb | ColorMode::Cmyk | ColorMode::Lab => f.mode,
-        _ => ColorMode::Rgb,
-    };
+    let mode = f.mode;
     // PSD has no half float: half-float patterns are stored as 32-bit float (lossless).
     let sample = if f.sample == SampleType::F16 { SampleType::F32 } else { f.sample };
     let fmt = PixelFormat::new(mode, sample, f.alpha);
     let surf = if fmt == f { p.surface.clone() } else { p.surface.convert(fmt) };
-    let mut bytes = surf.to_interleaved(p.rect());
+    let bytes = surf.to_interleaved(p.rect());
     let ch = fmt.channels();
-    if mode == ColorMode::Lab && fmt.sample == SampleType::U16 {
-        crate::pixels::lab16_chroma(&mut bytes, ch, false);
-    }
-    let mut invert = vec![mode == ColorMode::Cmyk; ch];
-    if fmt.alpha {
-        invert[ch - 1] = false;
-    }
+    let invert = vec![false; ch];
     let mut planes = deinterleave(&bytes, ch, fmt.sample, &invert);
     let alpha = fmt.alpha.then(|| planes.pop()).flatten();
     PsdPattern {
@@ -182,21 +183,38 @@ mod tests {
 
     #[test]
     fn patterns_round_trip_through_psd_at_every_depth_and_model() {
-        for mode in [ColorMode::Rgb, ColorMode::Grayscale, ColorMode::Cmyk, ColorMode::Lab] {
+        for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
             for s in [SampleType::U8, SampleType::U16, SampleType::F32] {
                 for alpha in [false, true] {
                     let p = pattern(mode, s, alpha);
                     let back = from_psd(&to_psd(&p)).unwrap();
-                    assert_eq!((&back.id, &back.name, back.width, back.surface.format()), (&p.id, &p.name, p.width, p.surface.format()));
-                    // Exact except float CMYK, whose stored inversion (1 − v) rounds.
-                    let (a, b) = (back.surface.read_region(p.rect()), p.surface.read_region(p.rect()));
-                    assert!(a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-6), "{mode:?} {s:?} {alpha}");
-                    if !(mode == ColorMode::Cmyk && s == SampleType::F32) {
-                        assert_eq!(back, p, "{mode:?} {s:?} {alpha}");
-                    }
+                    assert_eq!(back, p, "{mode:?} {s:?} {alpha}");
                 }
             }
         }
+    }
+
+    #[test]
+    fn cmyk_and_lab_patterns_open_as_rgb() {
+        // A CMYK pattern with no ink (planes stored inverted: 255 = paper) is white.
+        let cmyk = PsdPattern {
+            mode: 4,
+            width: 2,
+            height: 1,
+            name: "C".into(),
+            id: "c".into(),
+            palette: None,
+            depth: 8,
+            channels: vec![vec![255, 255]; 4],
+            alpha: None,
+        };
+        let p = from_psd(&cmyk).unwrap();
+        assert_eq!(p.surface.format().mode, ColorMode::Rgb);
+        assert!(p.surface.pixel(0, 0).iter().all(|v| *v > 0.98), "{:?}", p.surface.pixel(0, 0));
+        // Lab L 100, a 0, b 0 is white too.
+        let lab = PsdPattern { mode: 9, channels: vec![vec![255, 255], vec![128, 128], vec![128, 128]], ..cmyk };
+        let p = from_psd(&lab).unwrap();
+        assert!(p.surface.pixel(1, 0).iter().all(|v| *v > 0.98), "{:?}", p.surface.pixel(1, 0));
     }
 
     #[test]

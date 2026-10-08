@@ -46,8 +46,12 @@ pub(crate) struct Ctx<'a> {
     pub file: &'a PsdFile,
     pub fmt: PixelFormat,
     pub mask_fmt: PixelFormat,
+    /// Colour channels of the file's model (4 for CMYK); `fmt` holds the document's.
     pub cc: usize,
-    pub cmyk: bool,
+    /// Converts a CMYK or Lab file's samples to RGB (`None`: stored as they are).
+    pub native: Option<crate::native::Native>,
+    /// How the file's Levels and Curves channel records map (see [`adjust_map::Channels`]).
+    pub channels: adjust_map::Channels,
     pub warnings: Vec<String>,
     /// Document resolution (type sizes are converted to points with it).
     pub dpi: f32,
@@ -60,20 +64,6 @@ pub(crate) struct Ctx<'a> {
     /// Layer records decoded so far, out of `total` (progress).
     pub done: usize,
     pub total: usize,
-}
-
-fn doc_mode(m: PsdMode) -> Option<ColorMode> {
-    Some(match m {
-        PsdMode::Bitmap => ColorMode::Bitmap,
-        PsdMode::Grayscale => ColorMode::Grayscale,
-        PsdMode::Indexed => ColorMode::Indexed,
-        PsdMode::Rgb => ColorMode::Rgb,
-        PsdMode::Cmyk => ColorMode::Cmyk,
-        PsdMode::Multichannel => ColorMode::Multichannel,
-        PsdMode::Duotone => ColorMode::Duotone,
-        PsdMode::Lab => ColorMode::Lab,
-        PsdMode::Unknown(_) => return None,
-    })
 }
 
 // Real-mask metadata without a -3 channel still selects the synthetic -2 mask.
@@ -136,13 +126,21 @@ impl Ctx<'_> {
         let refs: Vec<Option<&[u8]>> = planes.iter().map(|p| p.as_deref()).collect();
         let mut fill: Vec<Vec<u8>> = vec![zero_sample(s); self.cc];
         fill.push(max_sample(s));
-        let mut invert = vec![self.cmyk; self.cc];
+        let mut invert = vec![matches!(self.native, Some(crate::native::Native::Cmyk(_))); self.cc];
         invert.push(false);
         let mut bytes = interleave(&refs, &fill, w * h, s, &invert);
-        if self.fmt.mode == ColorMode::Lab && s == SampleType::U16 {
-            crate::pixels::lab16_chroma(&mut bytes, self.cc + 1, true);
-        }
-        let mut surf = Surface::from_interleaved(self.fmt, Rect::new(r.left, r.top, r.right, r.bottom), &bytes);
+        let rect = Rect::new(r.left, r.top, r.right, r.bottom);
+        let mut surf = match &self.native {
+            Some(native) => {
+                if matches!(native, crate::native::Native::Lab) && s == SampleType::U16 {
+                    crate::pixels::lab16_chroma(&mut bytes, self.cc + 1, true);
+                }
+                let mut out = Surface::new(self.fmt);
+                out.write_region(rect, &native.to_rgb(&bytes, s, true));
+                out
+            }
+            None => Surface::from_interleaved(self.fmt, rect, &bytes),
+        };
         surf.prune();
         surf
     }
@@ -261,18 +259,7 @@ impl Ctx<'_> {
         let content = if let Some(k) = adj_key {
             let data = rec.block(k).map(|b| b.data.clone()).unwrap_or_default();
             let cged = rec.block(b"CgEd").map(|b| &b.data[..]);
-            LayerContent::Adjustment(adjust_map::parse(
-                k,
-                &data,
-                cged,
-                match self.fmt.mode {
-                    ColorMode::Rgb => adjust_map::Channels::Rgb,
-                    ColorMode::Grayscale => adjust_map::Channels::Gray,
-                    ColorMode::Cmyk => adjust_map::Channels::Cmyk,
-                    ColorMode::Lab => adjust_map::Channels::Lab,
-                    _ => adjust_map::Channels::Other,
-                },
-            ))
+            LayerContent::Adjustment(adjust_map::parse(k, &data, cged, self.channels))
         } else if rec.block(b"TySh").is_some() {
             // Typed model from TySh/EngineData (photocraft-text); Photoshop's pixels stay the cache.
             let data = rec.block(b"TySh").map(|b| b.data.clone()).unwrap_or_default();
@@ -509,12 +496,12 @@ pub fn psd_to_document(file: &PsdFile) -> (Document, Vec<String>) {
 pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) -> Option<(Document, Vec<String>)> {
     let h = &file.header;
     let mut warnings = Vec::new();
-    let mode = doc_mode(h.color_mode).unwrap_or_else(|| {
+    let mode = crate::native::document_mode(h.color_mode).unwrap_or_else(|| {
         warnings.push(format!("unknown color mode {}; importing as RGB", h.color_mode.as_u16()));
         ColorMode::Rgb
     });
-    let layered = matches!(mode, ColorMode::Grayscale | ColorMode::Rgb | ColorMode::Cmyk | ColorMode::Lab) && h.depth != 1;
-    let multichannel = mode == ColorMode::Multichannel && h.depth != 1;
+    let layered = matches!(h.color_mode, PsdMode::Grayscale | PsdMode::Rgb | PsdMode::Cmyk | PsdMode::Lab) && h.depth != 1;
+    let multichannel = h.color_mode == PsdMode::Multichannel && h.depth != 1;
     let depth = if layered || multichannel { sample_for_depth(h.depth) } else { SampleType::U8 };
     let mut doc = Document::new("Untitled", Size::new(h.width, h.height), mode, depth);
 
@@ -573,14 +560,31 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
         doc.measurement.scale = scale;
     }
 
+    // CMYK and Lab files convert to RGB as they are read; their profile describes the file's
+    // model, not the document's.
+    let native = crate::native::Native::for_psd(h.color_mode, doc.icc_profile.as_deref().map(Vec::as_slice));
+    if matches!(h.color_mode, PsdMode::Cmyk | PsdMode::Lab | PsdMode::Multichannel) {
+        doc.icc_profile = None;
+        if h.color_mode != PsdMode::Multichannel {
+            warnings.push(format!("{:?} document converted to RGB (PhotoCraft documents are RGB or grayscale)", h.color_mode));
+        }
+    }
     let fmt = doc.pixel_format();
-    let cc = fmt.mode.color_channels();
+    let cc = native.as_ref().map_or(fmt.mode.color_channels(), crate::native::Native::channels);
+    let channels = match h.color_mode {
+        PsdMode::Rgb => adjust_map::Channels::Rgb,
+        PsdMode::Grayscale => adjust_map::Channels::Gray,
+        PsdMode::Cmyk => adjust_map::Channels::Cmyk,
+        PsdMode::Lab => adjust_map::Channels::Lab,
+        _ => adjust_map::Channels::Other,
+    };
     let mut cx = Ctx {
         file,
         fmt,
         mask_fmt: PixelFormat::new(ColorMode::Grayscale, depth, false),
         cc,
-        cmyk: fmt.mode == ColorMode::Cmyk,
+        native,
+        channels,
         warnings,
         dpi: doc.resolution_dpi,
         txt2: file.global_blocks.iter().find(|b| &b.key == b"Txt2").and_then(|b| photocraft_text::psd::parse_txt2(&b.data)),
@@ -653,13 +657,21 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
             planes.push(alpha_idx.and_then(|a| all.get(a * plane..(a + 1) * plane)));
             let mut fill = vec![zero_sample(depth); cc];
             fill.push(max_sample(depth));
-            let mut inv = vec![cx.cmyk; cc];
+            let mut inv = vec![matches!(cx.native, Some(crate::native::Native::Cmyk(_))); cc];
             inv.push(false);
             let mut bytes = interleave(&planes, &fill, n, depth, &inv);
-            if fmt.mode == ColorMode::Lab && depth == SampleType::U16 {
-                crate::pixels::lab16_chroma(&mut bytes, cc + 1, true);
-            }
-            let mut s = Surface::from_interleaved(fmt, canvas, &bytes);
+            let mut s = match &cx.native {
+                Some(native) => {
+                    if matches!(native, crate::native::Native::Lab) && depth == SampleType::U16 {
+                        crate::pixels::lab16_chroma(&mut bytes, cc + 1, true);
+                    }
+                    let mut out = Surface::new(fmt);
+                    out.write_region(canvas, &native.to_rgb(&bytes, depth, true));
+                    out
+                }
+                None => Surface::from_interleaved(fmt, canvas, &bytes),
+            };
+            let dc = fmt.mode.color_channels();
             if alpha_idx.is_some() {
                 // Undo Photoshop's white matting of the merged image.
                 // A band of tile rows at a time (no full-size float copy of the image).
@@ -669,9 +681,9 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
                 while y < canvas.y1 {
                     let band = Rect::new(canvas.x0, y, canvas.x1, y.saturating_add(TILE_SIZE).min(canvas.y1));
                     s.read_region_into(band, &mut vals);
-                    for px in vals.chunks_exact_mut(cc + 1) {
-                        let a = px[cc];
-                        for c in 0..cc {
+                    for px in vals.chunks_exact_mut(dc + 1) {
+                        let a = px[dc];
+                        for c in 0..dc {
                             px[c] = if a <= 0.0 { 0.0 } else { crate::pixels::unmatte(px[c], a, white[c]) };
                         }
                     }
@@ -693,18 +705,9 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
         } else {
             cx.warn(format!("{:?} {}-bit document converted to {:?} 8-bit for editing", h.color_mode, h.depth, fmt.mode));
         }
-        if h.color_mode == PsdMode::Indexed && file.color_mode_data.len() >= 768 {
-            // Planar palette: 256 reds, 256 greens, 256 blues (the Color Table).
-            let m = &file.color_mode_data;
-            let colors = (0..256).map(|i| [m[i], m[256 + i], m[512 + i]]).collect();
-            doc.color_table = Some(photocraft_doc::ColorTable { colors, transparent: None });
-        } else if h.color_mode == PsdMode::Duotone && !file.color_mode_data.is_empty() {
-            // The duotone ink block is undocumented: keep it raw; the image shows as its gray plate.
-            doc.duotone =
-                Some(photocraft_doc::Duotone { inks: vec![photocraft_doc::DuotoneInk::new("Black", [0.0; 3])], psd_raw: Some(file.color_mode_data.clone()) });
-            cx.warn("duotone inks are not interpreted (shown as grayscale)");
-        } else if !file.color_mode_data.is_empty() {
-            cx.warn("color mode data is not preserved");
+        if h.color_mode == PsdMode::Duotone {
+            // The duotone ink block is undocumented: the image opens as its gray plate.
+            cx.warn("duotone inks are not interpreted: opened as grayscale");
         }
         let rgba = file.composite_rgba8().or_else(|_| {
             // Multichannel: show the first channels as RGB.

@@ -252,20 +252,10 @@ pub fn import_flat(name: &str, bytes: &[u8]) -> Result<Document, String> {
         CS::U16 => SampleType::U16,
         _ => SampleType::F32,
     };
+    // Documents are RGB or grayscale: anything else (CMYK) converts to RGB.
     let gray = matches!(img.layout(), ChannelLayout::Gray | ChannelLayout::GrayA);
+    let (mode, target) = if gray { (ColorMode::Grayscale, ChannelLayout::GrayA) } else { (ColorMode::Rgb, ChannelLayout::Rgba) };
     let cmyk = matches!(img.layout(), ChannelLayout::Cmyk | ChannelLayout::CmykA);
-    let mode = if gray {
-        ColorMode::Grayscale
-    } else if cmyk {
-        ColorMode::Cmyk
-    } else {
-        ColorMode::Rgb
-    };
-    let target = match mode {
-        ColorMode::Grayscale => ChannelLayout::GrayA,
-        ColorMode::Cmyk => ChannelLayout::CmykA,
-        _ => ChannelLayout::Rgba,
-    };
     let sample = match depth {
         SampleType::U8 => CS::U8,
         SampleType::U16 => CS::U16,
@@ -275,7 +265,8 @@ pub fn import_flat(name: &str, bytes: &[u8]) -> Result<Document, String> {
     let conv = img.convert(target, sample);
     let stem = std::path::Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(name.to_string());
     let mut doc = Document::new(stem, Size::new(w, h), mode, depth);
-    doc.icc_profile = img.icc.clone().map(std::sync::Arc::new);
+    // A CMYK profile no longer describes the converted pixels.
+    doc.icc_profile = img.icc.clone().filter(|_| !cmyk).map(std::sync::Arc::new);
     if let Some((x, _)) = img.meta.dpi {
         doc.resolution_dpi = x;
     }

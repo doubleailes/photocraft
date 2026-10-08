@@ -217,7 +217,7 @@ fn params_contain_ambient_path(id: &str, params: &Value) -> bool {
         "image.adjustments.colorLookup" | "layer.newAdjustmentLayer.colorLookup" | "layer.setAdjustment" => &["file"],
         "filter.distort.displace" => &["mapPath"],
         "layer.quickExportAsPng" | "layer.exportAs" | "image.applyDataSet" => &["path"],
-        "image.mode.rgb" | "image.mode.grayscale" | "image.mode.cmyk" | "image.mode.lab" => &["profile"],
+        "image.mode.rgb" | "image.mode.grayscale" => &["profile"],
         "edit.assignProfile" | "edit.convertToProfile" | "edit.profileInfo" | "view.proofSetup" | "view.gamutWarning" => &["profile"],
         "edit.colorSettings" => &["workingRgb", "workingCmyk", "workingGray"],
         _ => &[],
@@ -451,8 +451,8 @@ mod tests {
         for id in ["view.zoomIn", "window.theme.pro", "edit.search"] {
             assert!(authorize_desktop_engine_command(id, &serde_json::json!({})).is_ok(), "{id}");
         }
-        assert!(authorize_engine_command("image.mode.cmyk", &serde_json::json!({})).is_ok());
-        assert!(authorize_desktop_engine_command("image.mode.cmyk", &serde_json::json!({})).is_err());
+        assert!(authorize_engine_command("image.mode.grayscale", &serde_json::json!({})).is_ok());
+        assert!(authorize_desktop_engine_command("image.mode.grayscale", &serde_json::json!({})).is_err());
         assert!(authorize_engine_command("image.mode.rgb", &serde_json::json!({"profile": "/outside/profile.icc"})).is_err());
         assert!(authorize_engine_command("image.mode.rgb", &serde_json::json!({"profile": "srgb"})).is_ok());
         assert!(authorize_engine_command("filter.distort.displace", &serde_json::json!({"mapPath": "outside.png"})).is_err());

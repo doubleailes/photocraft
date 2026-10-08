@@ -247,12 +247,11 @@ mod tests {
         gray.icc_profile = Some(photocraft_engine::color_cmds::working_profile(gray.mode).to_bytes());
         assert_eq!(profile_name(&gray), "sGray (sRGB tone curve, Photocraft)");
 
-        let mut custom = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Cmyk)).clone();
-        custom.description = "PhotoCraft Studio CMYK".into();
+        let mut custom = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb)).clone();
+        custom.description = "PhotoCraft Studio RGB".into();
         let mut custom_doc = doc();
-        custom_doc.mode = photocraft_doc::ColorMode::Cmyk;
         custom_doc.icc_profile = Some(custom.with_encoded_bytes().to_bytes());
-        assert_eq!(profile_name(&custom_doc), "PhotoCraft Studio CMYK");
+        assert_eq!(profile_name(&custom_doc), "PhotoCraft Studio RGB");
     }
 
     #[test]
@@ -261,12 +260,11 @@ mod tests {
         malformed.icc_profile = Some(std::sync::Arc::new(vec![1, 2, 3]));
         assert_eq!(profile_name(&malformed), "Invalid RGB profile");
 
-        let mut unnamed_profile = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Cmyk)).clone();
+        let mut unnamed_profile = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb)).clone();
         unnamed_profile.description.clear();
         let mut unnamed = doc();
-        unnamed.mode = photocraft_doc::ColorMode::Cmyk;
         unnamed.icc_profile = Some(unnamed_profile.with_encoded_bytes().to_bytes());
-        assert_eq!(profile_name(&unnamed), "Unnamed CMYK profile");
+        assert_eq!(profile_name(&unnamed), "Unnamed RGB profile");
 
         let mut mismatched = doc();
         mismatched.mode = photocraft_doc::ColorMode::Grayscale;

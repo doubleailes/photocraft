@@ -112,13 +112,10 @@ fn exr_export_stays_linear_float_and_jpeg_is_encoded() {
 }
 
 #[test]
-fn float_files_and_other_modes_are_left_alone() {
+fn float_files_are_left_alone() {
     let mut f32doc = ramp_doc(SampleType::F32, 8);
     f32doc.icc_profile = Some(Builtin::Srgb.profile().to_bytes());
     assert!(!linearize(&mut f32doc).unwrap(), "32-bit files are linear whatever their tag");
-    let mut cmyk = Document::new("c", Size::new(4, 4), ColorMode::Cmyk, SampleType::U8);
-    assert!(!linearize(&mut cmyk).unwrap());
-    assert_eq!(cmyk.depth, SampleType::U8);
 }
 
 #[test]
@@ -144,9 +141,11 @@ fn file_new_is_linear_half_float_and_converts_the_background_colour() {
     let d = &s.active().unwrap().doc;
     assert_eq!(d.depth, SampleType::F32);
     assert!(is_linear(d));
-    // CMYK keeps its integer depths.
-    s.execute("file.new", json!({"width": 8, "height": 8, "mode": "cmyk", "depth": 16})).unwrap();
-    assert_eq!(s.active().unwrap().doc.depth, SampleType::U16);
+    // Grayscale too; integer depths are not offered.
+    s.execute("file.new", json!({"width": 8, "height": 8, "mode": "gray", "depth": 8})).unwrap();
+    let d = &s.active().unwrap().doc;
+    assert_eq!(d.depth, SampleType::F16);
+    assert!(is_linear(d));
 }
 
 #[test]

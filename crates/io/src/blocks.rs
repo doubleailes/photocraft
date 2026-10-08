@@ -95,7 +95,9 @@ pub(crate) fn num(v: Option<&Value>) -> Option<f64> {
     }
 }
 
-/// Descriptor color (`RGBC`, `CMYC`, `Grsc`, `HSBC`) → [`Color`].
+/// Descriptor color (`RGBC`, `CMYC`, `Grsc`, `LbCl`, `HSBC`) → [`Color`]. CMYK colours convert
+/// through the built-in CMYK profile and Lab ones through the D50 formulas: documents are RGB or
+/// grayscale.
 pub fn color_from_desc(d: &Descriptor) -> Option<Color> {
     let id = d.class_id.as_bytes();
     let g = |k: &str| num(d.get(k)).map(|v| v as f32);
@@ -103,10 +105,16 @@ pub fn color_from_desc(d: &Descriptor) -> Option<Color> {
         // Newer Photoshop writes 0..1 floats (`RGBC` with redFloat / greenFloat / blueFloat).
         b"RGBC" if d.get("redFloat").is_some() => Color::rgb(g("redFloat")?, g("greenFloat")?, g("blueFloat")?),
         b"RGBC" => Color::rgb(g("Rd  ")? / 255.0, g("Grn ")? / 255.0, g("Bl  ")? / 255.0),
-        b"CMYC" => Color { mode: ColorMode::Cmyk, c: [g("Cyn ")? / 100.0, g("Mgnt")? / 100.0, g("Ylw ")? / 100.0, g("Blck")? / 100.0], alpha: 1.0 },
+        b"CMYC" => {
+            let [r, gr, b] = photocraft_color::convert::cmyk_to_rgb([g("Cyn ")? / 100.0, g("Mgnt")? / 100.0, g("Ylw ")? / 100.0, g("Blck")? / 100.0]);
+            Color::rgb(r, gr, b)
+        }
         b"Grsc" => Color::gray(1.0 - g("Gry ")? / 100.0),
-        // CIE L*a*b*: L 0..100, a / b −128..127 (stored like Lab pixels: offset by 128).
-        b"LbCl" => Color { mode: ColorMode::Lab, c: [g("Lmnc")? / 100.0, (g("A   ")? + 128.0) / 255.0, (g("B   ")? + 128.0) / 255.0, 0.0], alpha: 1.0 },
+        // CIE L*a*b*: L 0..100, a / b −128..127.
+        b"LbCl" => {
+            let [r, gr, b] = photocraft_color::convert::lab_to_srgb([g("Lmnc")?, g("A   ")?, g("B   ")?]);
+            Color::rgb(r, gr, b)
+        }
         // Newer Photoshop writes 0..1 floats.
         _ if d.get("redFloat").is_some() => Color::rgb(g("redFloat")?, g("greenFloat")?, g("blueFloat")?),
         _ => {
@@ -120,16 +128,8 @@ pub fn color_from_desc(d: &Descriptor) -> Option<Color> {
 pub fn color_to_desc(c: &Color) -> Descriptor {
     let d = |v: f32| Value::Double(f64::from(v));
     match c.mode {
-        ColorMode::Cmyk => Descriptor::new("CMYC")
-            .with("Cyn ", d(c.c[0] * 100.0))
-            .with("Mgnt", d(c.c[1] * 100.0))
-            .with("Ylw ", d(c.c[2] * 100.0))
-            .with("Blck", d(c.c[3] * 100.0)),
         ColorMode::Grayscale => Descriptor::new("Grsc").with("Gry ", d((1.0 - c.c[0]) * 100.0)),
-        ColorMode::Lab => {
-            Descriptor::new("LbCl").with("Lmnc", d(c.c[0] * 100.0)).with("A   ", d(c.c[1] * 255.0 - 128.0)).with("B   ", d(c.c[2] * 255.0 - 128.0))
-        }
-        _ => {
+        ColorMode::Rgb => {
             let rgb = c.to_rgb();
             Descriptor::new("RGBC").with("Rd  ", d(rgb[0] * 255.0)).with("Grn ", d(rgb[1] * 255.0)).with("Bl  ", d(rgb[2] * 255.0))
         }
@@ -209,9 +209,7 @@ pub(crate) struct RawStops {
 pub(crate) fn gradient_stops_editable(grad: &Descriptor, method: Option<&[u8]>) -> RawStops {
     let mut raw = gradient_stops_raw(grad);
     let m = crate::gradient_bake::Method::from_code(method);
-    // Lab stops (Lab documents) interpolate in L*a*b*, which only baking reproduces.
-    let lab = raw.stops.iter().all(|(_, c)| c.mode == photocraft_color::ColorMode::Lab);
-    if raw.stops.len() >= 2 && (raw.smooth > 0.0 || m != crate::gradient_bake::Method::Classic || lab) {
+    if raw.stops.len() >= 2 && (raw.smooth > 0.0 || m != crate::gradient_bake::Method::Classic) {
         raw.stops = crate::gradient_bake::bake(std::mem::take(&mut raw.stops), &raw.mids, raw.smooth, m);
         raw.mids.clear();
     }
@@ -594,17 +592,24 @@ mod tests {
     }
 
     #[test]
-    fn lab_descriptor_colours_round_trip() {
+    fn lab_and_cmyk_descriptor_colours_become_rgb() {
         use photocraft_color::ColorMode;
         use photocraft_psd::descriptor::{Descriptor, Value};
-        let d = Descriptor::new("LbCl").with("Lmnc", Value::Double(19.07)).with("A   ", Value::Double(52.29)).with("B   ", Value::Double(-85.08));
+        // L 54.29, a 80.81, b 69.91 is sRGB red.
+        let d = Descriptor::new("LbCl").with("Lmnc", Value::Double(54.29)).with("A   ", Value::Double(80.81)).with("B   ", Value::Double(69.91));
         let c = super::color_from_desc(&d).unwrap();
-        assert_eq!(c.mode, ColorMode::Lab);
-        assert!((c.c[0] - 0.1907).abs() < 1e-5 && (c.c[1] * 255.0 - 128.0 - 52.29).abs() < 1e-3 && (c.c[2] * 255.0 - 128.0 + 85.08).abs() < 1e-3);
+        assert_eq!(c.mode, ColorMode::Rgb);
+        assert!(c.c[0] > 0.97 && c.c[1] < 0.05 && c.c[2] < 0.05, "{c:?}");
+        let k = Descriptor::new("CMYC")
+            .with("Cyn ", Value::Double(0.0))
+            .with("Mgnt", Value::Double(0.0))
+            .with("Ylw ", Value::Double(0.0))
+            .with("Blck", Value::Double(0.0));
+        let w = super::color_from_desc(&k).unwrap();
+        assert!(w.mode == ColorMode::Rgb && w.c[..3].iter().all(|v| *v > 0.98), "no ink is white: {w:?}");
         let back = super::color_from_desc(&super::color_to_desc(&c)).unwrap();
-        assert_eq!(back.mode, ColorMode::Lab);
         for i in 0..3 {
-            assert!((back.c[i] - c.c[i]).abs() < 1e-6);
+            assert!((back.c[i] - c.c[i]).abs() < 1e-3);
         }
         // Missing components are rejected, not defaulted.
         assert!(super::color_from_desc(&Descriptor::new("LbCl").with("Lmnc", Value::Double(50.0))).is_none());
@@ -712,7 +717,6 @@ mod tests {
     fn fills_roundtrip() {
         for f in [
             Fill::Solid(Color::rgb(1.0, 0.5, 0.0)),
-            Fill::Solid(Color { mode: ColorMode::Cmyk, c: [0.1, 0.2, 0.3, 0.4], alpha: 1.0 }),
             Fill::Solid(Color::gray(0.25)),
             Fill::gradient(vec![(0.0, Color::rgb(1.0, 0.0, 0.0)), (1.0, Color::rgb(0.0, 0.0, 1.0))], 45.0, 1.0, GradientStyle::Reflected, true),
             // A live gradient (Gradient tool): canvas-aligned, offset, midpoints, opacity, dither.

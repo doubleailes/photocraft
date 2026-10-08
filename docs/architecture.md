@@ -60,7 +60,7 @@ Sources: [GIMP 2.10 release notes](https://gimp.org/release-notes/gimp-2.10.html
 | Property | Rule | Where |
 |---|---|---|
 | **Bit depth** | Every surface carries a runtime `PixelFormat { depth: U8\|U16\|F16\|F32, model, alpha }`. Algorithms are written generically over a `Sample` trait and monomorphized per depth, or run on f32 working buffers and convert at tile edges. No `u8` pixel type appears in any public engine API. CI runs the golden suite at 8, 16 and 32f. | `raster`, `color`, `algo` |
-| **Colour model** | `ColorMode` (RGB, Gray, CMYK, Lab, Indexed, Bitmap, plus multichannel/spot) is in `doc` from the start. Channel count is dynamic (1–N plus alpha plus spot). Only RGB/Gray *rendering* ships first, but the storage, PSD round-trip and conversion paths never assume 3 or 4 channels. | `doc`, `raster`, `psd` |
+| **Colour model** | `ColorMode` is RGB or Gray (this fork removed CMYK, Lab, Indexed, Bitmap, Duotone and Multichannel; `photocraft-io` converts such files on import, keeping Multichannel inks as spot channels, see `docs/ocio-migration.md`). Channel count is dynamic (1 or 3 plus alpha plus spot). | `doc`, `raster`, `psd` |
 | **Colour management** | Every document has an ICC profile. The compositor takes a working-space descriptor. The display transform is a separate final stage. Blending space (gamma vs linear) is a per-document option. | `color`, `compose` |
 | **Non-destructive by construction** | `LayerContent` is an enum that includes Adjustment, Fill, Text, Shape and Smart from v1, with smart filters as a stack on any layer. The compositor evaluates a *graph*, not a list of flattened buffers. Destructive ops are just "apply and bake". | `doc`, `compose` |
 | **File formats** | Formats plug in through `trait ImageDecoder/Encoder` plus a registry with capability flags (depths, modes, layers, alpha, metadata, ICC). Adding a format is one crate feature. It must never need a change in core types. Lossless PSD round-trip preserves unknown blocks. | `codecs`, `io`, `psd` |
@@ -245,7 +245,7 @@ impl Viewport {
 ```rust
 pub struct Document {
     pub id: DocId, pub size: Size, pub resolution_dpi: f32,
-    pub mode: ColorMode /* Rgb | Gray | Cmyk | Lab | Bitmap | Indexed */, pub depth: Depth /* U8 | U16 | F32 */,
+    pub mode: ColorMode /* Rgb | Gray */, pub depth: Depth /* F16 | F32 (U8 | U16 until half-float step 3b) */,
     pub profile: IccProfileRef,
     pub root: LayerGroup,            // tree
     pub channels: Vec<AlphaChannel>, // saved selections/spot
@@ -273,7 +273,7 @@ pub enum LayerContent {
 - **Tile generation counters** feed the GPU residency cache and the thumbnail cache.
 - **Mip pyramids** are derived lazily per layer, for zoomed-out views.
 - **Big documents.** The tile store is behind a `TileStore` trait: in-memory now, disk-spilling ("scratch disk") later, with LRU eviction under a global memory budget.
-- **The first milestone supports RGB and Gray, at 8/16/32f.** CMYK and Lab are modelled in the types from day one (so PSD round-trips don't lose them) but are rendered by converting to RGB until later phases.
+- **Documents are RGB or Gray**, linear half float (or 32-bit float). Files in CMYK, Lab and the other models are converted to RGB or Gray when they are read.
 
 ---
 
@@ -318,7 +318,7 @@ Both backends consume the same plan. This is the only place that encodes Photosh
 ### 7.3 Color
 
 - Blending happens in document space by default, which is Photoshop-compatible. A per-document "linear light blending" option is also available.
-- **Display transform** (`engine/src/display_color.rs`): the canvas is always colour-managed, document profile → monitor profile (relative colorimetric + BPC), cached per (document profile, mode, monitor). On the GPU canvas the transform, plus Proof Colors / Gamut Warning / 32-bit preview, is baked into a 33³ 3D LUT the canvas shader's final pass applies; the CPU canvas runs an 8-bit `photocraft-cms` transform on the composite. When the document profile matches the monitor (sRGB on sRGB) there is no LUT and no transform. Linear composites (EXR/HDR, tagged linear sRGB on import) are stored sRGB-encoded in the 8-bit canvas texture. CMYK documents are read through their embedded CMYK profile (`photocraft_color::convert::with_cmyk_space`, entered by the compositors and composite exports).
+- **Display transform** (`engine/src/display_color.rs`): the canvas is always colour-managed, document profile → monitor profile (relative colorimetric + BPC), cached per (document profile, mode, monitor). On the GPU canvas the transform, plus Proof Colors / Gamut Warning / 32-bit preview, is baked into a 33³ 3D LUT the canvas shader's final pass applies; the CPU canvas runs an 8-bit `photocraft-cms` transform on the composite. When the document profile matches the monitor (sRGB on sRGB) there is no LUT and no transform. Linear composites (EXR/HDR, tagged linear sRGB on import) are stored sRGB-encoded in the 8-bit canvas texture.
 - **Monitor profile:** Edit › Color Settings › Monitor Profile: `auto`, a built-in RGB profile or an `.icc` path. In `auto` each window uses the profile of the display it is on (#569): the desktop app reads every display's id, name, frame and ICC profile (macOS: AppKit `NSScreen` through `osascript`, no FFI) at launch and again when the app comes back to the front, when any window is on an unknown or resized display (at most every 30 s; a trigger inside that window is deferred) and when Edit › Color Settings opens (`ui-egui/src/monitor_status.rs`; the helper is stopped after 10 s). There is deliberately no periodic re-read (#569 decision: a read costs about 0.2 s of CPU), so a profile reassigned while PhotoCraft stays in front with no window moving is picked up at the next return to the front or Color Settings, and each window picks the display it overlaps most (`display_color::display_at`, AppKit's `NSWindow.screen` rule). Elsewhere `auto` is sRGB. The GPU canvas keeps one texture per document and a display LUT per (document, display); CPU canvas textures are per (document, display). `ColorState::monitor_status_for` says what is applied per display: `auto`, `manual`, or `fallback` to sRGB with the reason (missing, unreadable, non-RGB or unusable as a destination), and whether the reading is an earlier one kept after a failed re-read; `edit.colorSettings` (`monitorStatus`, `displays`), Help › System Info and the Color Settings dialog show it, and a fallback in `auto` posts a notice. Letting macOS colour-match the canvas instead is #581 (an architecture decision).
 - **HDR/EDR output** (an `rgba16float` surface with an extended-range colorspace) is a later-phase feature. The interfaces already carry `f32` pixels.
 

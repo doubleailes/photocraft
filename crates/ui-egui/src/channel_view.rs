@@ -8,7 +8,7 @@
 //! recomposited per frame.
 
 use egui::{Color32, TextureOptions};
-use photocraft_doc::{AlphaChannel, ColorMode, Document};
+use photocraft_doc::{AlphaChannel, Document};
 use photocraft_engine::channel_cmds::{ChannelView, color_count};
 use photocraft_engine::mask_view_cmds::MaskViewMode;
 use photocraft_geom::Rect;
@@ -97,7 +97,6 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
         sample(&first.surface, r, factor).into_iter().map(|g| [g, g, g, 1.0]).collect()
     } else if vis < colors {
         let fmt = doc.pixel_format();
-        let mode = fmt.mode;
         let shown: Vec<usize> = (0..colors).filter(|k| v.color_visible(*k)).collect();
         // Shown on screen as is: a linear document's values are encoded for display first.
         let encode = photocraft_engine::linear_doc::is_linear(doc);
@@ -108,14 +107,13 @@ pub fn render(doc: &Document, v: &ChannelView, r: Rect, factor: u32, in_color: b
                 let mut native = from_rgba(&fmt, rgba);
                 if shown.len() == 1 && !in_color {
                     let x = native[shown[0]];
-                    // Ink channels read dark where there is ink.
-                    let g = show(if mode == ColorMode::Cmyk { 1.0 - x } else { x });
+                    let g = show(x);
                     return [g, g, g, 1.0];
                 }
                 for (k, x) in native[..colors].iter_mut().enumerate() {
                     if !v.color_visible(k) {
-                        // Hidden channels contribute nothing (Lab: neutral a/b).
-                        *x = if mode == ColorMode::Lab && k > 0 { 0.5 } else { 0.0 };
+                        // Hidden channels contribute nothing.
+                        *x = 0.0;
                     }
                 }
                 let c = to_rgba(&fmt, &native);

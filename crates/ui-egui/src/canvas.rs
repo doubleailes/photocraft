@@ -530,17 +530,13 @@ fn display_doc(app: &mut PhotocraftApp, idx: usize) -> (std::sync::Arc<Document>
         && let LayerContent::Adjustment(a) = &l.content
     {
         let kind = photocraft_engine::commands::adjustment_kind(a);
-        let preview = photocraft_engine::adjust_params::from_params(kind, params, Some(a), st.doc.mode).unwrap_or_else(|_| a.clone());
+        let preview = photocraft_engine::adjust_params::from_params(kind, params, Some(a)).unwrap_or_else(|_| a.clone());
         let mut doc = (*st.doc).clone();
         if let Some(lm) = doc.layer_mut(*layer) {
             lm.content = LayerContent::Adjustment(preview);
         }
         let key = 1 + params.to_string().bytes().fold(0u64, |h, b| h.wrapping_mul(31).wrapping_add(b as u64));
         return (std::sync::Arc::new(doc), key);
-    }
-    // Duotone documents display through their inks.
-    if let Some(shown) = photocraft_engine::mode_cmds::display_document(&st.doc) {
-        return (std::sync::Arc::new(shown), 1 << 41);
     }
     (st.doc.clone(), 0)
 }
@@ -909,7 +905,7 @@ fn ensure_proxy_preview(app: &mut PhotocraftApp, idx: usize) -> Option<(u32, u64
         let l = proxy.layer(layer)?;
         let LayerContent::Adjustment(a) = &l.content else { return None };
         let kind = photocraft_engine::commands::adjustment_kind(a);
-        let preview = photocraft_engine::adjust_params::from_params(kind, &params, Some(a), proxy.mode).unwrap_or_else(|_| a.clone());
+        let preview = photocraft_engine::adjust_params::from_params(kind, &params, Some(a)).unwrap_or_else(|_| a.clone());
         let mut p = (*proxy).clone();
         if let Some(lm) = p.layer_mut(layer) {
             lm.content = LayerContent::Adjustment(preview);
@@ -1354,12 +1350,6 @@ pub fn mode_label(doc: &Document) -> &'static str {
     match doc.mode {
         photocraft_doc::ColorMode::Rgb => "RGB",
         photocraft_doc::ColorMode::Grayscale => "Gray",
-        photocraft_doc::ColorMode::Cmyk => "CMYK",
-        photocraft_doc::ColorMode::Lab => "Lab",
-        photocraft_doc::ColorMode::Indexed => "Indexed",
-        photocraft_doc::ColorMode::Bitmap => "Bitmap",
-        photocraft_doc::ColorMode::Duotone => "Duotone",
-        photocraft_doc::ColorMode::Multichannel => "Multichannel",
     }
 }
 

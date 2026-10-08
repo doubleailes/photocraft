@@ -272,8 +272,8 @@ fn camera_raw_psd_fixture() {
 /// Every colour model: the smart object, its filters and the filter cache's unfiltered pixels
 /// (in the document's model, CMYK inverted and 16-bit Lab scaled as in layer channels) survive.
 #[test]
-fn smart_filters_survive_psd_in_every_colour_model() {
-    for (mode, depth) in [("cmyk", 8), ("cmyk", 16), ("grayscale", 8), ("lab", 8), ("lab", 16)] {
+fn smart_filters_survive_psd_in_rgb_and_grayscale() {
+    for (mode, depth) in [("rgb", 8), ("rgb", 16), ("grayscale", 8), ("grayscale", 16)] {
         let mut s = Session::new();
         photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": 32, "height": 24, "mode": mode, "depth": depth}));
         s.execute("layer.new.layer", json!({})).unwrap();
@@ -303,8 +303,7 @@ fn smart_filters_survive_psd_in_every_colour_model() {
         let (x, y) = (10 - item.rect.left, 8 - item.rect.top);
         let at = (y as usize * w + x as usize) * usize::from(bits / 8);
         let stored = if bits == 8 { f32::from(first[at]) / 255.0 } else { f32::from(u16::from_be_bytes([first[at], first[at + 1]])) / 65535.0 };
-        let v = px.sample_channel(10, 8, 0);
-        let expect = if mode == "cmyk" { 1.0 - v } else { v };
+        let expect = px.sample_channel(10, 8, 0);
         assert!((stored - expect).abs() < 0.01, "{mode} {depth}: slot 0 holds {stored}, expected {expect}");
     }
 }
@@ -314,7 +313,7 @@ fn smart_filters_survive_psd_in_every_colour_model() {
 #[test]
 #[ignore = "writes files for a manual Photoshop check"]
 fn photoshop_samples() {
-    for (mode, depth) in [("rgb", 8), ("rgb", 16), ("rgb", 32), ("cmyk", 8), ("lab", 16), ("grayscale", 8)] {
+    for (mode, depth) in [("rgb", 8), ("rgb", 16), ("rgb", 32), ("grayscale", 8)] {
         let mut s = Session::new();
         photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": W, "height": H, "mode": mode, "depth": depth}));
         s.execute("layer.new.layer", json!({})).unwrap();

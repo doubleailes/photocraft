@@ -6,7 +6,7 @@
 //! 2 = spot channel) and one padding byte. Resource 1007 has the same records without the
 //! version and without the spot kind.
 
-use photocraft_color::{Color, ColorMode};
+use photocraft_color::Color;
 use photocraft_doc::{AlphaChannel, ColorIndicates};
 
 pub(crate) const DISPLAY_INFO: u16 = 1077;
@@ -63,16 +63,14 @@ pub(crate) fn decode_color(space: u16, c: [u16; 4]) -> Color {
     match space {
         // Photoshop colour structures store CMYK inverted (65535 = no ink).
         SPACE_CMYK => {
-            let cmyk = Color { mode: ColorMode::Cmyk, c: [1.0 - n(c[0]), 1.0 - n(c[1]), 1.0 - n(c[2]), 1.0 - n(c[3])], alpha: 1.0 };
-            let rgb = cmyk.to_rgb();
+            let rgb = photocraft_color::convert::cmyk_to_rgb([1.0 - n(c[0]), 1.0 - n(c[1]), 1.0 - n(c[2]), 1.0 - n(c[3])]);
             Color::rgb(rgb[0], rgb[1], rgb[2])
         }
         SPACE_LAB => {
             let l = f32::from(c[0].min(10000)) / 10000.0;
             let a = f32::from(c[1] as i16) / 100.0;
             let b = f32::from(c[2] as i16) / 100.0;
-            let lab = Color { mode: ColorMode::Lab, c: [l, (a + 128.0) / 255.0, (b + 128.0) / 255.0, 0.0], alpha: 1.0 };
-            let rgb = lab.to_rgb();
+            let rgb = photocraft_color::convert::lab_to_srgb([l * 100.0, a, b]);
             Color::rgb(rgb[0], rgb[1], rgb[2])
         }
         SPACE_GRAY => {

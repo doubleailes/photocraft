@@ -372,7 +372,7 @@ fn auto_adjust(s: &mut Session, kind: &str) -> Result<Value> {
             }
         }
     }
-    let adj = Adjustment::Levels { master: LevelsChannel::default(), per_channel: per, space: Default::default(), black: LevelsChannel::default() };
+    let adj = Adjustment::Levels { master: LevelsChannel::default(), per_channel: per };
     let label = match kind {
         "contrast" => "Auto Contrast",
         "color" => "Auto Color",

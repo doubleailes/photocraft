@@ -3,15 +3,14 @@
 //!
 //! [`from_params`] reads params over a base adjustment (missing keys keep the base's value, so a
 //! partial update only changes what it names) and [`to_params`] writes the complete set back, so
-//! `from_params(kind, &to_params(a), None, mode) == a`. Values out of range are clamped like
+//! `from_params(kind, &to_params(a), None) == a`. Values out of range are clamped like
 //! Photoshop's fields; a key of the wrong type is an error.
 //!
 //! Units: Levels and Curves in 0–255 levels; percentages for the rest (as in Photoshop's dialogs);
 //! colours as `"#rrggbb"` or `[r, g, b]` in 0–1.
 
-use photocraft_color::ColorMode;
 use photocraft_doc::Adjustment;
-use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
+use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel};
 use serde_json::{Map, Value, json};
 
 use crate::{EngineError, Result};
@@ -46,33 +45,18 @@ pub const PHOTO_FILTERS: &[(&str, &str, [u8; 3])] = &[
     ("underwater", "Underwater", [0, 194, 177]),
 ];
 
-/// Per-channel keys of Levels/Curves in each tone space (after the composite).
-pub fn channel_keys(space: ToneSpace) -> &'static [&'static str] {
-    match space {
-        ToneSpace::Rgb => &["red", "green", "blue"],
-        ToneSpace::Cmyk => &["cyan", "magenta", "yellow", "black"],
-        ToneSpace::Lab => &["lightness", "a", "b"],
-    }
-}
-
-/// The tone space new Levels/Curves get in a document of `mode`.
-pub fn default_space(mode: ColorMode) -> ToneSpace {
-    match mode {
-        ColorMode::Cmyk => ToneSpace::Cmyk,
-        ColorMode::Lab => ToneSpace::Lab,
-        _ => ToneSpace::Rgb,
-    }
-}
+/// Per-channel keys of Levels/Curves (after the composite). Grayscale documents use the
+/// composite only.
+pub const CHANNEL_KEYS: [&str; 3] = ["red", "green", "blue"];
 
 /// The neutral adjustment of `kind` (what "Reset to defaults" restores).
-pub fn default_for(kind: &str, mode: ColorMode) -> Result<Adjustment> {
-    from_params(kind, &json!({}), None, mode)
+pub fn default_for(kind: &str) -> Result<Adjustment> {
+    from_params(kind, &json!({}), None)
 }
 
 /// Reads the adjustment of `kind` from `p` over `base` (or the kind's defaults when `base` is
-/// None or of another kind). `mode` picks the Levels/Curves channel space when neither the params
-/// nor the base name one.
-pub fn from_params(kind: &str, p: &Value, base: Option<&Adjustment>, mode: ColorMode) -> Result<Adjustment> {
+/// None or of another kind).
+pub fn from_params(kind: &str, p: &Value, base: Option<&Adjustment>) -> Result<Adjustment> {
     let cmd = format!("adjustment `{kind}`");
     if !p.is_object() && !p.is_null() {
         return Err(bad(&cmd, "params must be an object"));
@@ -118,8 +102,8 @@ pub fn from_params(kind: &str, p: &Value, base: Option<&Adjustment>, mode: Color
             Adjustment::Vibrance { vibrance: r.num("vibrance", v, -100.0, 100.0)?, saturation: r.num("saturation", s, -100.0, 100.0)? }
         }
         "hueSaturation" => hue_saturation(&r, base)?,
-        "levels" => levels(&r, base, mode)?,
-        "curves" => curves(&r, base, mode)?,
+        "levels" => levels(&r, base)?,
+        "curves" => curves(&r, base)?,
         "colorBalance" => {
             let (mut tones, preserve) = match base {
                 Some(Adjustment::ColorBalance { shadows, midtones, highlights, preserve_luminosity }) => {
@@ -225,26 +209,17 @@ pub fn to_params(adj: &Adjustment) -> Value {
             }
             v
         }
-        Adjustment::Levels { master, per_channel, space, black } => {
+        Adjustment::Levels { master, per_channel } => {
             let mut v = levels_obj(master);
-            for (key, c) in channel_keys(*space).iter().zip([&per_channel[0], &per_channel[1], &per_channel[2], black]) {
+            for (key, c) in CHANNEL_KEYS.iter().zip(per_channel) {
                 v[*key] = levels_obj(c);
-            }
-            if *space == ToneSpace::Lab {
-                // No composite in Lab: the top-level keys are the lightness channel.
-                v = merge(levels_obj(&per_channel[0]), v);
             }
             v
         }
-        Adjustment::Curves { master, per_channel, space, black } => {
+        Adjustment::Curves { master, per_channel } => {
             let mut v = json!({"points": curve_arr(master)});
-            let ink = if black.len() >= 2 { black.clone() } else { identity_curve() };
-            let chans = per_channel.iter().cloned().chain(std::iter::once(ink));
-            for (key, c) in channel_keys(*space).iter().zip(chans) {
-                v[*key] = curve_arr(&c);
-            }
-            if *space == ToneSpace::Lab {
-                v["points"] = curve_arr(&per_channel[0]);
+            for (key, c) in CHANNEL_KEYS.iter().zip(per_channel) {
+                v[*key] = curve_arr(c);
             }
             v
         }
@@ -370,15 +345,6 @@ pub fn hex(c: [f32; 3]) -> String {
     format!("#{:02x}{:02x}{:02x}", b(c[0]), b(c[1]), b(c[2]))
 }
 
-fn merge(mut a: Value, b: Value) -> Value {
-    if let (Some(ao), Value::Object(bo)) = (a.as_object_mut(), b) {
-        for (k, v) in bo {
-            ao.entry(k).or_insert(v);
-        }
-    }
-    a
-}
-
 fn mixer_row(v: &[f32]) -> [f32; 4] {
     std::array::from_fn(|i| v.get(i).copied().unwrap_or(0.0).clamp(-200.0, 200.0) / 100.0)
 }
@@ -406,31 +372,11 @@ fn hue_saturation(r: &Reader<'_>, base: Option<&Adjustment>) -> Result<Adjustmen
     Ok(Adjustment::HueSaturation { hue, saturation, lightness, colorize, ranges })
 }
 
-/// Which tone space the params address: any channel key of a space picks it.
-fn space_of(r: &Reader<'_>, base: Option<ToneSpace>, mode: ColorMode) -> ToneSpace {
-    let has = |keys: &[&str]| keys.iter().any(|k| r.get(k).is_some());
-    if has(&["cyan", "magenta", "yellow", "black"]) {
-        ToneSpace::Cmyk
-    } else if has(&["a", "b"]) || (has(&["lightness"]) && !has(&["red", "green", "blue"])) {
-        ToneSpace::Lab
-    } else if has(&["red", "green", "blue"]) {
-        ToneSpace::Rgb
-    } else {
-        base.unwrap_or_else(|| default_space(mode))
-    }
-}
-
-fn levels(r: &Reader<'_>, base: Option<&Adjustment>, mode: ColorMode) -> Result<Adjustment> {
-    let (mut master, mut chans, base_space) = match base {
-        Some(Adjustment::Levels { master, per_channel, space, black }) => {
-            (master.clone(), [per_channel[0].clone(), per_channel[1].clone(), per_channel[2].clone(), black.clone()], Some(*space))
-        }
-        _ => (LevelsChannel::default(), Default::default(), None),
+fn levels(r: &Reader<'_>, base: Option<&Adjustment>) -> Result<Adjustment> {
+    let (mut master, mut chans) = match base {
+        Some(Adjustment::Levels { master, per_channel }) => (master.clone(), per_channel.clone()),
+        _ => (LevelsChannel::default(), Default::default()),
     };
-    let space = space_of(r, base_space, mode);
-    if base_space.is_some_and(|b| b != space) {
-        chans = Default::default();
-    }
     let read = |o: &Reader<'_>, c: &LevelsChannel| -> Result<LevelsChannel> {
         let in_black = o.num("inBlack", c.in_black * 255.0, 0.0, 253.0)?;
         let in_white = o.num("inWhite", c.in_white * 255.0, 2.0, 255.0)?.max(in_black + 2.0);
@@ -442,22 +388,16 @@ fn levels(r: &Reader<'_>, base: Option<&Adjustment>, mode: ColorMode) -> Result<
             out_white: o.num("outWhite", c.out_white * 255.0, 0.0, 255.0)? / 255.0,
         })
     };
-    if space == ToneSpace::Lab {
-        // Top-level keys (and "gray") address lightness: Lab has no composite.
-        chans[0] = read(r, &chans[0])?;
-    } else {
-        master = read(r, &master)?;
-        if let Some(o) = r.object("gray")? {
-            master = read(&o, &master)?;
+    master = read(r, &master)?;
+    if let Some(o) = r.object("gray")? {
+        master = read(&o, &master)?;
+    }
+    for (key, c) in CHANNEL_KEYS.iter().zip(chans.iter_mut()) {
+        if let Some(o) = r.object(key)? {
+            *c = read(&o, c)?;
         }
     }
-    for (i, key) in channel_keys(space).iter().enumerate() {
-        if let (Some(o), Some(c)) = (r.object(key)?, chans.get(i).cloned()) {
-            chans[i] = read(&o, &c)?;
-        }
-    }
-    let [c0, c1, c2, black] = chans;
-    Ok(Adjustment::Levels { master, per_channel: [c0, c1, c2], space, black: if space == ToneSpace::Cmyk { black } else { LevelsChannel::default() } })
+    Ok(Adjustment::Levels { master, per_channel: chans })
 }
 
 fn identity_curve() -> Vec<CurvePoint> {
@@ -494,36 +434,20 @@ pub fn parse_curve(cmd: &str, key: &str, v: &Value) -> Result<Vec<CurvePoint>> {
     Ok(pts)
 }
 
-fn curves(r: &Reader<'_>, base: Option<&Adjustment>, mode: ColorMode) -> Result<Adjustment> {
-    let (mut master, mut chans, base_space) = match base {
-        Some(Adjustment::Curves { master, per_channel, space, black }) => {
-            (master.clone(), [per_channel[0].clone(), per_channel[1].clone(), per_channel[2].clone(), black.clone()], Some(*space))
-        }
-        _ => (identity_curve(), std::array::from_fn(|_| identity_curve()), None),
+fn curves(r: &Reader<'_>, base: Option<&Adjustment>) -> Result<Adjustment> {
+    let (mut master, mut chans) = match base {
+        Some(Adjustment::Curves { master, per_channel }) => (master.clone(), per_channel.clone()),
+        _ => (identity_curve(), std::array::from_fn(|_| identity_curve())),
     };
-    let space = space_of(r, base_space, mode);
-    if base_space.is_some_and(|b| b != space) {
-        chans = std::array::from_fn(|_| identity_curve());
+    if let Some(v) = r.get("points").or_else(|| r.get("gray")) {
+        master = parse_curve(r.cmd, "points", v)?;
     }
-    let composite = r.get("points").or_else(|| r.get("gray"));
-    if let Some(v) = composite {
-        let c = parse_curve(r.cmd, "points", v)?;
-        if space == ToneSpace::Lab {
-            chans[0] = c;
-        } else {
-            master = c;
-        }
-    }
-    for (i, key) in channel_keys(space).iter().enumerate() {
-        if let Some(v) = r.get(key)
-            && let Some(slot) = chans.get_mut(i)
-        {
+    for (key, slot) in CHANNEL_KEYS.iter().zip(chans.iter_mut()) {
+        if let Some(v) = r.get(key) {
             *slot = parse_curve(r.cmd, key, v)?;
         }
     }
-    let [c0, c1, c2, black] = chans;
-    let black = if space == ToneSpace::Cmyk && !photocraft_doc::adjust::is_identity_curve(&black) { black } else { Vec::new() };
-    Ok(Adjustment::Curves { master, per_channel: [c0, c1, c2], space, black })
+    Ok(Adjustment::Curves { master, per_channel: chans })
 }
 
 fn levels_obj(c: &LevelsChannel) -> Value {
@@ -609,45 +533,37 @@ mod tests {
 
     #[test]
     fn every_kind_round_trips_through_params() {
-        for mode in [ColorMode::Rgb, ColorMode::Cmyk, ColorMode::Lab, ColorMode::Grayscale] {
-            for kind in KINDS {
-                let mut p = sample(kind);
-                if matches!(kind, "levels" | "curves") && default_space(mode) != ToneSpace::Rgb {
-                    // Off RGB the channel keys are the document's.
-                    p.as_object_mut().unwrap().retain(|k, _| !matches!(k.as_str(), "red" | "blue"));
-                }
-                let a = from_params(kind, &p, None, mode).unwrap_or_else(|e| panic!("{kind} {mode:?}: {e}"));
-                assert_ne!(Some(&a), default_for(kind, mode).ok().as_ref().filter(|_| kind != "invert"), "{kind} params ignored");
-                let back = from_params(kind, &to_params(&a), None, mode).unwrap();
-                assert_eq!(to_params(&back), to_params(&a), "{kind} {mode:?}");
-                // A partial update keeps everything it doesn't name.
-                let again = from_params(kind, &json!({}), Some(&a), mode).unwrap();
-                assert_eq!(again, a, "{kind} {mode:?}");
-            }
+        for kind in KINDS {
+            let p = sample(kind);
+            let a = from_params(kind, &p, None).unwrap_or_else(|e| panic!("{kind}: {e}"));
+            assert_ne!(Some(&a), default_for(kind).ok().as_ref().filter(|_| kind != "invert"), "{kind} params ignored");
+            let back = from_params(kind, &to_params(&a), None).unwrap();
+            assert_eq!(to_params(&back), to_params(&a), "{kind}");
+            // A partial update keeps everything it doesn't name.
+            let again = from_params(kind, &json!({}), Some(&a)).unwrap();
+            assert_eq!(again, a, "{kind}");
         }
     }
 
     #[test]
     fn params_reach_the_model() {
-        let a = from_params("colorBalance", &json!({"midtones": [50, 0, -200]}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("colorBalance", &json!({"midtones": [50, 0, -200]}), None).unwrap();
         assert_eq!(a, Adjustment::ColorBalance { shadows: [0.0; 3], midtones: [50.0, 0.0, -100.0], highlights: [0.0; 3], preserve_luminosity: true });
-        let a = from_params("channelMixer", &json!({"monochrome": true}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("channelMixer", &json!({"monochrome": true}), None).unwrap();
         assert!(matches!(a, Adjustment::ChannelMixer { matrix, monochrome: true } if matrix[0] == [0.4, 0.4, 0.2, 0.0]));
-        let a = from_params("photoFilter", &json!({"filter": "cooling80", "density": 60}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("photoFilter", &json!({"filter": "cooling80", "density": 60}), None).unwrap();
         assert!(matches!(a, Adjustment::PhotoFilter { color, density, .. } if color[2] == 1.0 && (density - 0.6).abs() < 1e-6));
-        let a = from_params("blackWhite", &json!({"reds": 120, "tint": true}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("blackWhite", &json!({"reds": 120, "tint": true}), None).unwrap();
         assert!(matches!(a, Adjustment::BlackWhite { weights, tint: Some(_) } if weights[0] == 120.0 && weights[1] == 60.0));
-        let a = from_params("hueSaturation", &json!({"blues": {"hue": 40}}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("hueSaturation", &json!({"blues": {"hue": 40}}), None).unwrap();
         assert!(matches!(&a, Adjustment::HueSaturation { ranges, .. } if ranges[4].hue == 40.0 && ranges[0].is_neutral()));
-        let a = from_params("gradientMap", &json!({"stops": [[1, "#ffffff"], [0, "#000000"]], "dither": true}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("gradientMap", &json!({"stops": [[1, "#ffffff"], [0, "#000000"]], "dither": true}), None).unwrap();
         assert!(matches!(&a, Adjustment::GradientMap { stops, dither: true, .. } if stops[0].0 == 0.0));
-        // CMYK curves: ink channels; Lab: lightness without a composite.
-        let a = from_params("curves", &json!({"black": [[0, 0], [255, 200]]}), None, ColorMode::Rgb).unwrap();
-        assert!(matches!(&a, Adjustment::Curves { space: ToneSpace::Cmyk, black, .. } if black.len() == 2));
-        let a = from_params("curves", &json!({"points": [[0, 40], [255, 255]]}), None, ColorMode::Lab).unwrap();
-        assert!(matches!(&a, Adjustment::Curves { space: ToneSpace::Lab, per_channel, .. } if per_channel[0][0].output > 0.1));
-        let a = from_params("levels", &json!({"inBlack": 20}), None, ColorMode::Cmyk).unwrap();
-        assert!(matches!(&a, Adjustment::Levels { space: ToneSpace::Cmyk, master, .. } if (master.in_black - 20.0 / 255.0).abs() < 1e-6));
+        // The composite and the RGB channels; old CMYK/Lab channel keys are ignored.
+        let a = from_params("curves", &json!({"points": [[0, 40], [255, 255]], "black": [[0, 0], [255, 200]]}), None).unwrap();
+        assert!(matches!(&a, Adjustment::Curves { master, .. } if master[0].output > 0.1));
+        let a = from_params("levels", &json!({"inBlack": 20, "green": {"gamma": 2}}), None).unwrap();
+        assert!(matches!(&a, Adjustment::Levels { master, per_channel } if (master.in_black - 20.0 / 255.0).abs() < 1e-6 && per_channel[1].gamma == 2.0));
     }
 
     #[test]
@@ -671,18 +587,18 @@ mod tests {
             ("nope", json!({})),
             ("levels", json!([1, 2])),
         ] {
-            assert!(from_params(kind, &p, None, ColorMode::Rgb).is_err(), "{kind} {p}");
+            assert!(from_params(kind, &p, None).is_err(), "{kind} {p}");
         }
         // Out-of-range numbers clamp.
-        let a = from_params("hueSaturation", &json!({"hue": 1e9, "saturation": -1e9}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("hueSaturation", &json!({"hue": 1e9, "saturation": -1e9}), None).unwrap();
         assert!(matches!(a, Adjustment::HueSaturation { hue: 180.0, saturation: -100.0, .. }));
-        let a = from_params("levels", &json!({"inBlack": 250, "inWhite": 10}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("levels", &json!({"inBlack": 250, "inWhite": 10}), None).unwrap();
         assert!(matches!(a, Adjustment::Levels { master, .. } if master.in_white > master.in_black));
     }
 
     #[test]
     fn hue_range_sliders_stay_ordered() {
-        let a = from_params("hueSaturation", &json!({"greens": {"range": [100, 90, 200, 150]}}), None, ColorMode::Rgb).unwrap();
+        let a = from_params("hueSaturation", &json!({"greens": {"range": [100, 90, 200, 150]}}), None).unwrap();
         let Adjustment::HueSaturation { ranges, .. } = a else { panic!() };
         let b = ranges[2].bounds;
         assert!(b[0] <= b[1] && b[1] <= b[2] && b[2] <= b[3] && b[3] - b[0] < 360.0, "{b:?}");
@@ -718,7 +634,7 @@ mod tests {
                 assert_eq!(s.active().unwrap().history.past_len(), steps + 1, "{kind}: one history step");
                 // Identity params leave the pixels alone (within one 8-bit step).
                 let mut s = colourful("rgb", depth);
-                s.execute(&format!("image.adjustments.{kind}"), to_params(&default_for(kind, ColorMode::Rgb).unwrap())).unwrap();
+                s.execute(&format!("image.adjustments.{kind}"), to_params(&default_for(kind).unwrap())).unwrap();
                 if !matches!(*kind, "threshold" | "posterize" | "blackWhite" | "gradientMap" | "photoFilter") {
                     for (a, b) in pixels(&s).iter().zip(&before) {
                         assert!(a.iter().zip(b).all(|(x, y)| (x - y).abs() <= 1.0 / 255.0 + 1e-4), "{kind} @{depth}: {a:?} vs {b:?}");
@@ -747,24 +663,12 @@ mod tests {
     }
 
     #[test]
-    fn cmyk_and_lab_documents_use_their_channels() {
-        let mut s = colourful("cmyk", 8);
+    fn grayscale_documents_use_the_composite() {
+        let mut s = colourful("gray", 16);
         let before = pixels(&s);
-        // More black ink darkens every patch.
-        s.execute("image.adjustments.curves", json!({"black": [[0, 0], [255, 180]]})).unwrap();
+        s.execute("image.adjustments.levels", json!({"outBlack": 60})).unwrap();
         let after = pixels(&s);
-        assert!(after.iter().zip(&before).all(|(a, b)| a[3] > b[3] + 0.05), "{after:?} vs {before:?}");
-        let mut s = colourful("lab", 16);
-        let before = pixels(&s);
-        s.execute("image.adjustments.levels", json!({"lightness": {"outBlack": 60}})).unwrap();
-        let after = pixels(&s);
-        assert!(after.iter().zip(&before).all(|(a, b)| a[0] >= b[0]), "lightness lifted {after:?} vs {before:?}");
-        // The adjustment layer of a CMYK document defaults to ink channels.
-        let mut s = colourful("cmyk", 8);
-        s.execute("layer.newAdjustmentLayer.curves", json!({})).unwrap();
-        let id = s.active().unwrap().active_layer.unwrap();
-        let l = s.active().unwrap().doc.layer(id).unwrap().clone();
-        assert!(matches!(l.content, photocraft_doc::LayerContent::Adjustment(Adjustment::Curves { space: ToneSpace::Cmyk, .. })));
+        assert!(after.iter().zip(&before).all(|(a, b)| a[0] > b[0]), "lifted {after:?} vs {before:?}");
     }
 
     #[test]
@@ -779,7 +683,7 @@ mod tests {
         };
         assert!(matches!(adj(&s), Adjustment::ColorBalance { midtones: [30.0, 0.0, 0.0], highlights: [0.0, 0.0, -20.0], .. }));
         s.execute("layer.setAdjustment", json!({"layer": id.0})).unwrap();
-        assert_eq!(adj(&s), default_for("colorBalance", ColorMode::Rgb).unwrap());
+        assert_eq!(adj(&s), default_for("colorBalance").unwrap());
         // Bad params are errors and leave the layer alone.
         s.execute("layer.setAdjustment", json!({"midtones": [10, 10, 10]})).unwrap();
         let kept = adj(&s);

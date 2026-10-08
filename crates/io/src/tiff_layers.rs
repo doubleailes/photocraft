@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use photocraft_codecs::{self as codecs, ChannelLayout, Format, Image, SampleType as CSample};
-use photocraft_color::ColorMode;
 use photocraft_doc::Document;
 use photocraft_psd::resources::ids;
 use photocraft_psd::tiff::{ByteOrder, ImageSourceData, resources_from_bytes, resources_to_bytes};
@@ -30,12 +29,9 @@ pub fn would_write_layers(doc: &Document) -> bool {
     !(single_layer(doc).is_some() && doc.layers.first().is_some_and(|l| l.locks.transparency))
 }
 
-/// Documents a layered TIFF can hold: the TIFF composite must be in the document's model so
-/// that the layer channels inside the tag match it (Lab TIFFs are not decoded or encoded by
-/// `photocraft-codecs`), and there must be layers to keep (a Multichannel document has none:
-/// its channels are the image).
+/// Documents a layered TIFF can hold: there must be layers to keep.
 fn layered_mode(doc: &Document) -> bool {
-    matches!(doc.pixel_format().mode, ColorMode::Grayscale | ColorMode::Rgb | ColorMode::Cmyk) && doc.mode != ColorMode::Multichannel && !doc.layers.is_empty()
+    !doc.layers.is_empty()
 }
 
 /// Replaces (or inserts) resource `id`; removes it when `data` is `None`.
@@ -147,8 +143,8 @@ fn planar_big_endian(img: &Image, color_channels: usize, invert_color: bool) -> 
 }
 
 /// Planar big-endian planes (the PSD merged image) → an interleaved native-endian codec image
-/// of `channels` channels, un-inverting CMYK colour channels.
-fn interleave(planes: &[u8], w: u32, h: u32, channels: usize, color_channels: usize, sample: CSample, invert_color: bool) -> Result<Vec<u8>, IoError> {
+/// of `channels` channels.
+fn interleave(planes: &[u8], w: u32, h: u32, channels: usize, sample: CSample) -> Result<Vec<u8>, IoError> {
     let n = w as usize * h as usize;
     let bps = sample.bytes();
     let plane = n * bps;
@@ -159,17 +155,10 @@ fn interleave(planes: &[u8], w: u32, h: u32, channels: usize, color_channels: us
     for i in 0..n {
         for c in 0..channels {
             let at = c * plane + i * bps;
-            let invert = invert_color && c < color_channels;
             match planes.get(at..at + bps) {
-                Some([v]) => out.push(if invert { 255 - *v } else { *v }),
-                Some([a, b]) => {
-                    let v = u16::from_be_bytes([*a, *b]);
-                    out.extend_from_slice(&(if invert { 65535 - v } else { v }).to_ne_bytes());
-                }
-                Some([a, b, c, d]) => {
-                    let v = f32::from_be_bytes([*a, *b, *c, *d]);
-                    out.extend_from_slice(&(if invert { 1.0 - v } else { v }).to_ne_bytes());
-                }
+                Some([v]) => out.push(*v),
+                Some([a, b]) => out.extend_from_slice(&u16::from_be_bytes([*a, *b]).to_ne_bytes()),
+                Some([a, b, c, d]) => out.extend_from_slice(&f32::from_be_bytes([*a, *b, *c, *d]).to_ne_bytes()),
                 _ => return Err(IoError::Unsupported(format!("{bps}-byte samples"))),
             }
         }
@@ -177,8 +166,7 @@ fn interleave(planes: &[u8], w: u32, h: u32, channels: usize, color_channels: us
     Ok(out)
 }
 
-/// Saves `doc` as a layered TIFF. Documents whose colour mode a TIFF cannot hold in our
-/// codec (Lab) are saved flat, with a warning.
+/// Saves `doc` as a layered TIFF (a document without layers is saved flat).
 pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<ExportResult, IoError> {
     if !layered_mode(doc) {
         let mut r = crate::flat::export_flat(doc, Format::Tiff, opts)?;
@@ -212,8 +200,7 @@ pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<Exp
     }
     let sample = csample(fmt.sample);
     let (w, h) = (doc.size.width, doc.size.height);
-    let cmyk = fmt.mode == ColorMode::Cmyk;
-    let data = interleave(&file.image_data.data, w, h, channels, cc, sample, cmyk)?;
+    let data = interleave(&file.image_data.data, w, h, channels, sample)?;
     let layout = layout_for(fmt.mode, has_alpha);
     let mut img = Image::from_raw(w, h, layout, sample, data)?;
     img.icc = doc.icc_profile.as_ref().map(|i| i.to_vec());

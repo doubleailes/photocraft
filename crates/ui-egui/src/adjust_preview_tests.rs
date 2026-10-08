@@ -172,11 +172,6 @@ fn ineligible_targets_use_the_proxy_preview() {
     assert!(preview_document(&doc, target, "levels", &json!({"gamma": "x"})).is_err());
     assert!(preview_document(&doc, target, "nope", &json!({})).is_err());
     assert!(preview_document(&doc, target, "curves", &json!([1, 2])).is_err());
-    // CMYK and Lab adjust through RGB per pixel: proxy preview.
-    for mode in [ColorMode::Cmyk, ColorMode::Lab] {
-        let (d, t) = document(mode, SampleType::U8, false);
-        assert!(unsupported(&d, t).is_some(), "{mode:?}");
-    }
     let (gray, t) = document(ColorMode::Grayscale, SampleType::U16, false);
     assert!(preview_document(&gray, t, "hueSaturation", &json!({"colorize": true, "hue": 30, "saturation": 40})).is_err());
     assert!(preview_document(&gray, t, "hueSaturation", &json!({"lightness": 20})).is_ok());

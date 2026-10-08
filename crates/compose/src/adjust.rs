@@ -6,7 +6,7 @@
 use photocraft_color::SampleType;
 use photocraft_color::convert::{D50, SRGB_TO_XYZ_D50, XYZ_D50_TO_SRGB, mat3_mul, rgb_to_gray, srgb_to_linear};
 use photocraft_doc::Adjustment;
-use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
+use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel};
 
 use crate::Buffer;
 
@@ -32,8 +32,8 @@ impl Transfer {
             return Transfer::Gamma(1.0);
         }
         match mode {
-            photocraft_color::ColorMode::Grayscale | photocraft_color::ColorMode::Duotone | photocraft_color::ColorMode::Bitmap => Transfer::Gamma(1.732),
-            _ => Transfer::Srgb,
+            photocraft_color::ColorMode::Grayscale => Transfer::Gamma(1.732),
+            photocraft_color::ColorMode::Rgb => Transfer::Srgb,
         }
     }
     /// The tone curve Exposure linearises through: RGB documents use a pure 2.2 power, not the
@@ -119,12 +119,9 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
                 })
             })
         }
-        Adjustment::Levels { space, .. } | Adjustment::Curves { space, .. } => {
+        Adjustment::Levels { .. } | Adjustment::Curves { .. } => {
             let luts = tone_luts_depth(adj, depth);
-            match space {
-                ToneSpace::Rgb => map_rgb(buf, |c| std::array::from_fn(|i| lut(&luts[i], c[i]))),
-                ToneSpace::Cmyk | ToneSpace::Lab => map_rgb(buf, |c| tone_in_space(*space, &luts, c)),
-            }
+            map_rgb(buf, |c| std::array::from_fn(|i| lut(&luts[i], c[i])))
         }
         Adjustment::HueSaturation { hue, saturation, lightness, colorize, ranges } => {
             let table = (!*colorize && ranges.iter().any(|r| !r.is_neutral())).then(|| hue_range_tables(ranges));
@@ -223,9 +220,8 @@ pub fn apply_depth(adj: &Adjustment, buf: &mut Buffer, transfer: Transfer, depth
 }
 
 /// Per-channel LUTs of a Levels or Curves adjustment, each channel's record composed with the
-/// master (Photoshop applies the channel curve first, then the composite). Four rows: the three
-/// `per_channel` channels then black (identity unless the space is CMYK). In Lab there is no
-/// composite record, so the master is ignored.
+/// master (Photoshop applies the channel curve first, then the composite). Four rows: red,
+/// green, blue, then an identity row (alpha, untouched).
 pub fn tone_luts(adj: &Adjustment) -> [Vec<f32>; 4] {
     tone_luts_q(adj, None)
 }
@@ -235,16 +231,14 @@ pub fn tone_luts(adj: &Adjustment) -> [Vec<f32>; 4] {
 pub fn tone_luts_q(adj: &Adjustment, quantum: Option<f32>) -> [Vec<f32>; 4] {
     let x = |k: usize| k as f32 / (LUT_SIZE - 1) as f32;
     match adj {
-        Adjustment::Levels { master, per_channel, space, black } => {
-            let ident = LevelsChannel::default();
-            let m = if *space == ToneSpace::Lab { &ident } else { master };
-            let row = |c: &LevelsChannel| (0..LUT_SIZE).map(|k| levels_q(c, levels_q(m, x(k), quantum), quantum)).collect();
-            [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), row(if *space == ToneSpace::Cmyk { black } else { &ident })]
+        Adjustment::Levels { master, per_channel } => {
+            let row = |c: &LevelsChannel| (0..LUT_SIZE).map(|k| levels_q(c, levels_q(master, x(k), quantum), quantum)).collect();
+            [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), (0..LUT_SIZE).map(x).collect()]
         }
-        Adjustment::Curves { master, per_channel, space, black } => {
-            let m = if *space == ToneSpace::Lab { curve_lut(&[]) } else { curve_lut(master) };
+        Adjustment::Curves { master, per_channel } => {
+            let m = curve_lut(master);
             let row = |c: &[CurvePoint]| curve_lut(c).iter().map(|&v| lut(&m, v)).collect();
-            [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), row(if *space == ToneSpace::Cmyk { black } else { &[] })]
+            [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), (0..LUT_SIZE).map(x).collect()]
         }
         _ => std::array::from_fn(|_| (0..LUT_SIZE).map(x).collect()),
     }
@@ -254,42 +248,13 @@ pub fn tone_luts_q(adj: &Adjustment, quantum: Option<f32>) -> [Vec<f32>; 4] {
 /// [`levels_float`], sampled on 0..1 and kept in 0..1 like every adjustment result here.
 pub fn tone_luts_depth(adj: &Adjustment, depth: Option<SampleType>) -> [Vec<f32>; 4] {
     match (adj, depth) {
-        (Adjustment::Levels { master, per_channel, space: ToneSpace::Rgb, .. }, Some(SampleType::F16 | SampleType::F32)) => {
+        (Adjustment::Levels { master, per_channel }, Some(SampleType::F16 | SampleType::F32)) => {
             let x = |k: usize| k as f32 / (LUT_SIZE - 1) as f32;
             let row = |c: &LevelsChannel| (0..LUT_SIZE).map(|k| levels_float(c, levels_float(master, x(k))).clamp(0.0, 1.0)).collect();
             [row(&per_channel[0]), row(&per_channel[1]), row(&per_channel[2]), (0..LUT_SIZE).map(x).collect()]
         }
         _ => tone_luts_q(adj, depth.and_then(crate::adjustment_quantum)),
     }
-}
-
-/// Applies channel LUTs to a display-RGB colour in CMYK (ink brightness, 1 - ink) or Lab space,
-/// through the conversions the document's surfaces use. The change is added as a difference of
-/// two round trips, so channels a curve leaves alone (and out-of-gamut colours) stay exact.
-fn tone_in_space(space: ToneSpace, luts: &[Vec<f32>; 4], c: [f32; 3]) -> [f32; 3] {
-    use photocraft_color::convert::{cmyk_to_rgb, lab_to_srgb, rgb_to_cmyk, srgb_to_lab};
-    let (before, after) = match space {
-        ToneSpace::Cmyk => {
-            let ink = rgb_to_cmyk(c);
-            let out: [f32; 4] = std::array::from_fn(|i| 1.0 - lut(&luts[i], 1.0 - ink[i]));
-            if out == ink {
-                return c;
-            }
-            (cmyk_to_rgb(ink), cmyk_to_rgb(out))
-        }
-        ToneSpace::Lab => {
-            let l = srgb_to_lab(c);
-            let n = [l[0] / 100.0, (l[1] + 128.0) / 255.0, (l[2] + 128.0) / 255.0];
-            let o: [f32; 3] = std::array::from_fn(|i| lut(&luts[i], n[i]));
-            if o == n {
-                return c;
-            }
-            let back = |v: [f32; 3]| lab_to_srgb([v[0] * 100.0, v[1] * 255.0 - 128.0, v[2] * 255.0 - 128.0]);
-            (back(n), back(o))
-        }
-        ToneSpace::Rgb => return std::array::from_fn(|i| lut(&luts[i], c[i])),
-    };
-    std::array::from_fn(|i| (c[i] + after[i] - before[i]).clamp(0.0, 1.0))
 }
 
 /// Hue/Saturation's range edits as three hue-indexed tables (hue shift in degrees, saturation and
@@ -741,46 +706,14 @@ mod tone_tests {
     }
 
     #[test]
-    fn identity_tone_in_every_space_is_identity() {
-        for space in [ToneSpace::Rgb, ToneSpace::Cmyk, ToneSpace::Lab] {
-            let mut a = Adjustment::identity_curves();
-            if let Adjustment::Curves { space: s, .. } = &mut a {
-                *s = space;
-            }
-            let mut b = ramp();
-            apply(&a, &mut b);
-            for (x, y) in b.px.iter().zip(ramp().px.iter()) {
-                for k in 0..3 {
-                    assert!((x[k] - y[k]).abs() < 0.02, "{space:?} {x:?} {y:?}");
-                }
+    fn identity_curves_are_identity() {
+        let mut b = ramp();
+        apply(&Adjustment::identity_curves(), &mut b);
+        for (x, y) in b.px.iter().zip(ramp().px.iter()) {
+            for k in 0..3 {
+                assert!((x[k] - y[k]).abs() < 0.02, "{x:?} {y:?}");
             }
         }
-    }
-
-    #[test]
-    fn cmyk_black_curve_darkens_and_lab_lightness_lifts() {
-        let line = |a: f32, b: f32| vec![CurvePoint { input: 0.0, output: a }, CurvePoint { input: 1.0, output: b }];
-        // Black brightness 1 -> 0.5: more black ink everywhere.
-        let a = Adjustment::Curves {
-            master: line(0.0, 1.0),
-            per_channel: [line(0.0, 1.0), line(0.0, 1.0), line(0.0, 1.0)],
-            space: ToneSpace::Cmyk,
-            black: line(0.0, 0.5),
-        };
-        let mut b = Buffer { rect: Rect::new(0, 0, 1, 1), px: vec![[0.8, 0.8, 0.8, 1.0]] };
-        apply(&a, &mut b);
-        assert!(b.px[0][0] < 0.7, "{:?}", b.px[0]);
-        // Lab lightness 0..1 -> 0.2..1 lifts a dark grey; a/b untouched keeps it grey.
-        let a = Adjustment::Curves {
-            master: line(1.0, 0.0), // ignored in Lab
-            per_channel: [line(0.2, 1.0), line(0.0, 1.0), line(0.0, 1.0)],
-            space: ToneSpace::Lab,
-            black: Vec::new(),
-        };
-        let mut b = Buffer { rect: Rect::new(0, 0, 1, 1), px: vec![[0.2, 0.2, 0.2, 1.0]] };
-        apply(&a, &mut b);
-        let p = b.px[0];
-        assert!(p[0] > 0.3 && (p[0] - p[2]).abs() < 0.02, "{p:?}");
     }
 
     #[test]

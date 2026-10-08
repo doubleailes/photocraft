@@ -1,7 +1,7 @@
 use super::*;
 
 const DEPTHS: [u64; 3] = [8, 16, 32];
-const MODES: [&str; 4] = ["rgb", "gray", "cmyk", "lab"];
+const MODES: [&str; 2] = ["rgb", "gray"];
 
 fn session(depth: u64, mode: &str) -> Session {
     let mut s = Session::new();
@@ -131,15 +131,13 @@ fn disabled_without_pixels() {
 #[test]
 fn selective_color_layer_and_destructive() {
     for depth in DEPTHS {
-        for mode in ["rgb", "cmyk", "lab"] {
-            let mut s = session(depth, mode);
-            paint(&mut s, |_, _| [0.9, 0.1, 0.1, 1.0]);
-            let before = rgba(&s, 1, 1);
-            // Reds: −100 % cyan (absolute) makes red redder; +100 % black darkens.
-            s.execute("image.adjustments.selectiveColor", json!({"method": "absolute", "reds": [0, 0, 0, 60]})).unwrap();
-            let after = rgba(&s, 1, 1);
-            assert!(after[0] < before[0] - 0.05, "{depth} {mode}: {before:?} → {after:?}");
-        }
+        let mut s = session(depth, "rgb");
+        paint(&mut s, |_, _| [0.9, 0.1, 0.1, 1.0]);
+        let before = rgba(&s, 1, 1);
+        // Reds: −100 % cyan (absolute) makes red redder; +100 % black darkens.
+        s.execute("image.adjustments.selectiveColor", json!({"method": "absolute", "reds": [0, 0, 0, 60]})).unwrap();
+        let after = rgba(&s, 1, 1);
+        assert!(after[0] < before[0] - 0.05, "{depth}: {before:?} → {after:?}");
     }
     let mut s = session(8, "rgb");
     let r = s.execute("layer.newAdjustmentLayer.selectiveColor", json!({"colors": "blues", "yellow": 40})).unwrap();

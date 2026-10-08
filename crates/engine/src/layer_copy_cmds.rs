@@ -8,7 +8,6 @@
 //! document. Pixels are converted to the destination's colour profile (Color Settings' intent and
 //! black point compensation) and bit depth, as Photoshop converts dragged layers.
 
-use photocraft_color::ColorMode;
 use photocraft_doc::{Document, LayerId};
 use photocraft_geom::Rect;
 use serde_json::{Value, json};
@@ -48,11 +47,6 @@ fn point(p: &Value, key: &str) -> Result<Option<[f64; 2]>> {
     }
 }
 
-/// Modes whose layers convert through the colour engine.
-fn layered(mode: ColorMode) -> bool {
-    matches!(mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Cmyk | ColorMode::Lab)
-}
-
 fn center(r: Rect) -> [f64; 2] {
     [(f64::from(r.x0) + f64::from(r.x1)) / 2.0, (f64::from(r.y0) + f64::from(r.y1)) / 2.0]
 }
@@ -83,11 +77,6 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     let ids = crate::layer_multi_cmds::top_level(&sdoc, &ids);
     if ids.is_empty() {
         return Err(bad("no layers to copy"));
-    }
-    for (doc, role) in [(&sdoc, "source"), (&ddoc, "destination")] {
-        if !layered(doc.mode) {
-            return Err(EngineError::Other(format!("layers can't be copied with a {:?} {role} document", doc.mode)));
-        }
     }
     // The copies, bottom to top, in a scratch document of the source's colour so they convert
     // the way a whole document does.

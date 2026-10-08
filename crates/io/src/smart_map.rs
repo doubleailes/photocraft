@@ -728,8 +728,7 @@ pub fn feid_item(placed: &str, unfiltered: &Surface, mask: Option<&LayerMask>, b
             .or_else(|_| EffectsPlane::encode(Compression::Raw, plane, w, h, depth))
             .unwrap_or(EffectsPlane { compression: Compression::Raw, data: plane.to_vec() })
     };
-    let mut invert = vec![doc_fmt.mode == ColorMode::Cmyk; cc];
-    invert.push(false);
+    let invert = vec![false; cc + 1];
     // Fully transparent pixels carry white, as in Photoshop's own cache: filters that look at
     // colour regardless of alpha (Shadows/Highlights) read it.
     let mut vals = px.read_region(r);
@@ -742,11 +741,7 @@ pub fn feid_item(placed: &str, unfiltered: &Surface, mask: Option<&LayerMask>, b
     let mut filled = Surface::new(doc_fmt);
     filled.write_region(r, &vals);
     drop(vals);
-    let mut bytes = filled.to_interleaved(r);
-    if doc_fmt.mode == ColorMode::Lab && sample == SampleType::U16 {
-        // 16-bit Lab a*/b* in Photoshop's scale, as in layer channels.
-        crate::pixels::lab16_chroma(&mut bytes, cc + 1, false);
-    }
+    let bytes = filled.to_interleaved(r);
     let planes = crate::pixels::deinterleave(&bytes, cc + 1, sample, &invert);
     let (w, h) = (r.width() as usize, r.height() as usize);
     let mut slots = vec![None; 26];

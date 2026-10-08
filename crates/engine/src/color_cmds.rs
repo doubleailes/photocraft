@@ -4,12 +4,11 @@
 //!
 //! Document space: `Document::icc_profile` holds the document's ICC bytes (kept byte-exact
 //! from PSD resource 1039 / PNG iCCP / JPEG APP2 / TIFF). `None` means untagged: the working
-//! profile of the mode is assumed (sRGB, sGray, the built-in coated CMYK, Lab D50).
+//! profile of the mode is assumed (sRGB, sGray).
 //!
-//! Compositing stays in document space for RGB and gray documents. CMYK and Lab documents are
-//! composited in sRGB after a per-layer conversion with the built-in profiles (see
-//! `photocraft_color::convert`), so their [`composite_profile`] is sRGB; documents tagged with
-//! a different CMYK profile therefore display approximately until compositing is mode-native.
+//! Documents are RGB or grayscale and composite in document space. CMYK remains a proofing
+//! target (View › Proof Setup, the working CMYK space); files in CMYK or Lab are converted when
+//! they are opened (`photocraft_io`).
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, Weak};
@@ -100,7 +99,8 @@ impl Policy {
 
 /// Edit › Color Settings: working spaces, colour management policies and conversion options.
 /// Honoured when files are opened ([`Session::open_document`]), by Image › Mode conversions
-/// and by "working" profile specs (Convert to Profile, Proof Setup).
+/// and by "working" profile specs (Convert to Profile, Proof Setup). The working CMYK space is
+/// the default proof profile.
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ColorSettings {
@@ -109,7 +109,6 @@ pub struct ColorSettings {
     pub working_cmyk: String,
     pub working_gray: String,
     pub policy_rgb: Policy,
-    pub policy_cmyk: Policy,
     pub policy_gray: Policy,
     /// Ask what to do when an opened file's embedded profile differs from the working space.
     pub ask_on_mismatch: bool,
@@ -135,7 +134,6 @@ impl Default for ColorSettings {
             working_cmyk: Builtin::CoatedCmyk.id().into(),
             working_gray: Builtin::SGray.id().into(),
             policy_rgb: Policy::Preserve,
-            policy_cmyk: Policy::Preserve,
             policy_gray: Policy::Preserve,
             ask_on_mismatch: true,
             ask_on_paste: true,
@@ -153,13 +151,11 @@ impl ColorSettings {
     pub fn intent(&self) -> Intent {
         Intent::parse(&self.intent).unwrap_or(Intent::RelativeColorimetric)
     }
-    /// Policy for documents in `mode`'s colour space (Lab documents are never converted).
+    /// Policy for documents in `mode`.
     pub fn policy(&self, mode: ColorMode) -> Policy {
-        match mode_space(mode) {
-            ColorSpace::Cmyk => self.policy_cmyk,
-            ColorSpace::Gray => self.policy_gray,
-            ColorSpace::Rgb => self.policy_rgb,
-            _ => Policy::Preserve,
+        match mode {
+            ColorMode::Grayscale => self.policy_gray,
+            ColorMode::Rgb => self.policy_rgb,
         }
     }
     fn working_spec(&self, space: ColorSpace) -> Option<&str> {
@@ -175,7 +171,7 @@ impl ColorSettings {
 /// Check that each working space resolves to a profile of the right colour space.
 pub fn validate_settings(c: &ColorSettings) -> std::result::Result<(), String> {
     for (space, spec) in [(ColorSpace::Rgb, &c.working_rgb), (ColorSpace::Cmyk, &c.working_cmyk), (ColorSpace::Gray, &c.working_gray)] {
-        let p = resolve_profile(spec, None, space_mode(space)).map_err(|e| e.to_string())?;
+        let p = resolve_profile(spec, None, None).map_err(|e| e.to_string())?;
         if p.color_space != space {
             return Err(format!("working space `{spec}` is {:?}, not {space:?}", p.color_space));
         }
@@ -217,19 +213,23 @@ impl ColorState {
     /// The working profile of a mode from Color Settings (the built-in default when the
     /// setting does not resolve).
     pub fn working(&self, mode: ColorMode) -> Arc<Profile> {
-        let space = mode_space(mode);
+        self.working_space(mode_space(mode))
+    }
+
+    /// The working profile of an ICC colour space (RGB, CMYK or gray) from Color Settings.
+    pub fn working_space(&self, space: ColorSpace) -> Arc<Profile> {
         self.settings
             .working_spec(space)
-            .and_then(|spec| resolve_profile(spec, None, Some(mode)).ok())
+            .and_then(|spec| resolve_profile(spec, None, None).ok())
             .filter(|p| p.color_space == space)
-            .unwrap_or_else(|| working_profile(mode))
+            .unwrap_or_else(|| builtin_working(space))
     }
 
     /// Resolve a profile spec, reading "working…" specs from Color Settings.
     pub fn resolve(&self, spec: &str, doc: Option<&Document>, mode: Option<ColorMode>) -> Result<Arc<Profile>> {
         match spec {
             "working" | "default" => Ok(self.working(mode.or(doc.map(|d| d.mode)).unwrap_or(ColorMode::Rgb))),
-            "working-cmyk" | "workingCmyk" => Ok(self.working(ColorMode::Cmyk)),
+            "working-cmyk" | "workingCmyk" => Ok(self.working_space(ColorSpace::Cmyk)),
             "working-rgb" | "workingRgb" => Ok(self.working(ColorMode::Rgb)),
             "working-gray" | "workingGray" => Ok(self.working(ColorMode::Grayscale)),
             _ => resolve_profile(spec, doc, mode),
@@ -240,9 +240,6 @@ impl ColorState {
     /// (`action`: kept|converted|discarded|assigned|untagged) and whether to ask the user.
     pub fn open_policy(&self, doc: &mut Document) -> Value {
         let space = mode_space(doc.mode);
-        if !matches!(space, ColorSpace::Rgb | ColorSpace::Cmyk | ColorSpace::Gray) {
-            return json!({"action": "kept"});
-        }
         let working = self.working(doc.mode);
         let policy = self.settings.policy(doc.mode);
         let embedded = doc.icc_profile.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == space);
@@ -407,26 +404,28 @@ fn cms_err(e: photocraft_cms::CmsError) -> EngineError {
 /// ICC colour space of a document mode.
 pub fn mode_space(mode: ColorMode) -> ColorSpace {
     match mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => ColorSpace::Gray,
-        ColorMode::Cmyk => ColorSpace::Cmyk,
-        ColorMode::Lab => ColorSpace::Lab,
-        _ => ColorSpace::Rgb,
+        ColorMode::Grayscale => ColorSpace::Gray,
+        ColorMode::Rgb => ColorSpace::Rgb,
     }
 }
 
+/// The document mode holding a colour space (`None`: no document is in it, e.g. CMYK or Lab).
 fn space_mode(cs: ColorSpace) -> Option<ColorMode> {
     Some(match cs {
         ColorSpace::Rgb => ColorMode::Rgb,
         ColorSpace::Gray => ColorMode::Grayscale,
-        ColorSpace::Cmyk => ColorMode::Cmyk,
-        ColorSpace::Lab => ColorMode::Lab,
         _ => return None,
     })
 }
 
 /// Working (default) profile of a mode.
 pub fn working_profile(mode: ColorMode) -> Arc<Profile> {
-    Arc::new(photocraft_cms::builtin::default_for(mode_space(mode)).unwrap_or(Builtin::Srgb.profile()).clone())
+    builtin_working(mode_space(mode))
+}
+
+/// The built-in default profile of a colour space (sRGB when there is none).
+fn builtin_working(space: ColorSpace) -> Arc<Profile> {
+    Arc::new(photocraft_cms::builtin::default_for(space).unwrap_or(Builtin::Srgb.profile()).clone())
 }
 
 /// Parses ICC bytes, caching by allocation so repeated lookups for the same document are free.
@@ -458,14 +457,13 @@ pub fn document_profile(doc: &Document) -> Arc<Profile> {
 
 /// Profile describing the compositor's RGB output for this document (see the module docs).
 pub fn composite_profile(doc: &Document) -> Arc<Profile> {
-    match mode_space(doc.mode) {
-        ColorSpace::Rgb => document_profile(doc),
-        ColorSpace::Gray => {
+    match doc.mode {
+        ColorMode::Rgb => document_profile(doc),
+        ColorMode::Grayscale => {
             let p = document_profile(doc);
             // sGray is a TRC profile, so its RGB view always exists; sRGB is the last resort.
             p.gray_as_rgb().or_else(|| Builtin::SGray.profile().gray_as_rgb()).map(Arc::new).unwrap_or_else(|| Arc::new(Builtin::Srgb.profile().clone()))
         }
-        _ => Arc::new(Builtin::Srgb.profile().clone()),
     }
 }
 
@@ -477,7 +475,7 @@ pub fn resolve_profile(spec: &str, doc: Option<&Document>, mode: Option<ColorMod
             let m = mode.or(doc.map(|d| d.mode)).unwrap_or(ColorMode::Rgb);
             return Ok(working_profile(m));
         }
-        "working-cmyk" | "workingCmyk" => return Ok(working_profile(ColorMode::Cmyk)),
+        "working-cmyk" | "workingCmyk" => return Ok(builtin_working(ColorSpace::Cmyk)),
         "working-rgb" | "workingRgb" => return Ok(working_profile(ColorMode::Rgb)),
         "working-gray" | "workingGray" => return Ok(working_profile(ColorMode::Grayscale)),
         "document" => return doc.map(document_profile).ok_or(EngineError::NoDocument),
@@ -659,37 +657,23 @@ pub fn convert_document(doc: &mut Document, dst: &Profile, intent: Intent, bpc: 
     }
     doc.mode = to_mode;
     doc.icc_profile = Some(dst.to_bytes());
-    // Leaving Indexed / Duotone: the palette and inks no longer apply.
-    doc.color_table = None;
-    doc.duotone = None;
     Ok(())
 }
 
-/// Image › Mode › RGB/Grayscale/CMYK/Lab through the CMS. Params: `profile` (destination,
-/// default the mode's working profile), `intent` (default relative), `bpc` (default true).
+/// Image › Mode › RGB/Grayscale through the CMS. Params: `profile` (destination, default the
+/// mode's working profile), `intent` (default relative), `bpc` (default true).
 pub fn convert_mode(s: &mut Session, mode: ColorMode, p: &Value) -> Result<Value> {
     let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
-    if doc.mode == ColorMode::Multichannel && mode != ColorMode::Multichannel {
-        return crate::multichannel_cmds::convert_from(s, mode, p);
-    }
     if doc.mode == mode && p.get("profile").is_none() {
         return Ok(Value::Null);
     }
     let dst = match p.get("profile").and_then(Value::as_str) {
         Some(spec) => s.color.resolve(spec, Some(doc), Some(mode))?,
         // Float RGB and gray documents are linear (`linear_doc`), whatever mode they come from.
-        None => match crate::linear_doc::linear_profile(mode).filter(|_| doc.depth.is_float()) {
-            Some(lin) => Arc::new(lin.clone()),
-            None => s.color.working(mode),
-        },
+        None if doc.depth.is_float() => Arc::new(crate::linear_doc::linear_profile(mode).clone()),
+        None => s.color.working(mode),
     };
-    if space_mode(dst.color_space)
-        != Some(match mode {
-            ColorMode::Bitmap | ColorMode::Duotone => ColorMode::Grayscale,
-            ColorMode::Indexed | ColorMode::Multichannel => ColorMode::Rgb,
-            m => m,
-        })
-    {
+    if space_mode(dst.color_space) != Some(mode) {
         return Err(EngineError::Other(format!("profile `{}` is {:?}, not {mode:?}", dst.description, dst.color_space)));
     }
     let intent = intent_or(p, s.color.settings.intent())?;
@@ -791,7 +775,10 @@ fn proof_setup(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let (id, doc) = (st.doc.id, st.doc.clone());
     let name = p.get("profile").and_then(Value::as_str).unwrap_or("working-cmyk").to_string();
-    let profile = s.color.resolve(&name, Some(&doc), Some(ColorMode::Cmyk))?;
+    let profile = match name.as_str() {
+        "working" | "default" => s.color.working_space(ColorSpace::Cmyk),
+        spec => s.color.resolve(spec, Some(&doc), None)?,
+    };
     let intent = intent_param(p)?;
     let setup = ProofSetup {
         name,
@@ -826,7 +813,10 @@ fn gamut_warning(s: &mut Session, p: &Value) -> Result<Value> {
     let mut setup = pv.setup.clone();
     let (on, threshold) = (pv.gamut_warning, pv.gamut_threshold);
     if let Some(spec) = p.get("profile").and_then(Value::as_str) {
-        setup.profile = resolve_profile(spec, Some(&doc), Some(ColorMode::Cmyk))?;
+        setup.profile = match spec {
+            "working" | "default" => builtin_working(ColorSpace::Cmyk),
+            spec => resolve_profile(spec, Some(&doc), None)?,
+        };
     }
     let (_, count) = gamut_mask(&doc, &setup, threshold)?;
     let total = doc.size.width as usize * doc.size.height as usize;
@@ -853,7 +843,7 @@ fn color_settings(s: &mut Session, p: &Value) -> Result<Value> {
     if let Some(v) = str_of("monitorProfile") {
         next.monitor_profile = v;
     }
-    for (k, slot) in [("policyRgb", &mut next.policy_rgb), ("policyCmyk", &mut next.policy_cmyk), ("policyGray", &mut next.policy_gray)] {
+    for (k, slot) in [("policyRgb", &mut next.policy_rgb), ("policyGray", &mut next.policy_gray)] {
         if let Some(v) = p.get(k).and_then(Value::as_str) {
             *slot = Policy::parse(v).ok_or_else(|| EngineError::BadParams { cmd: cmd.into(), msg: format!("`{k}` must be preserve|convert|off") })?;
         }
@@ -892,10 +882,10 @@ fn color_settings(s: &mut Session, p: &Value) -> Result<Value> {
         s.prefs.edit(|_| ());
     }
     let c = &s.color.settings;
-    let desc = |m: ColorMode| s.color.working(m).description.clone();
+    let desc = |cs: ColorSpace| s.color.working_space(cs).description.clone();
     Ok(json!({
         "settings": c,
-        "working": {"rgb": desc(ColorMode::Rgb), "cmyk": desc(ColorMode::Cmyk), "gray": desc(ColorMode::Grayscale)},
+        "working": {"rgb": desc(ColorSpace::Rgb), "cmyk": desc(ColorSpace::Cmyk), "gray": desc(ColorSpace::Gray)},
         "monitor": s.color.monitor().description,
         "monitorDetected": !s.color.displays.is_empty(),
         "monitorStatus": s.color.monitor_status(),
@@ -988,7 +978,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "edit.colorSettings",
             "Color Settings…",
             ["Edit"],
-            r##"{"workingRgb":"srgb|display-p3|adobe-rgb-compat|prophoto-compat|linear-srgb|rec2020","workingCmyk":"coated-cmyk","workingGray":"sgray|gray-gamma-2.2","policyRgb":"preserve|convert|off","policyCmyk":"preserve|convert|off","policyGray":"preserve|convert|off","askOnMismatch":bool=true,"askOnPaste":bool=true,"askOnMissing":bool=false,"intent":"relative|perceptual|saturation|absolute","blendTextGamma":1.0..2.2|bool=1.45,"bpc":bool=true,"dither":bool=true,"monitorProfile":"auto|srgb|display-p3|adobe-rgb-compat|prophoto-compat|rec2020","reset":bool=false} (working spaces and the monitor profile also accept .icc paths; monitor `auto` = the main display's profile when the platform provides it, else sRGB; the reply's `monitorStatus` says which profile is in use and why: source auto|manual|fallback, reason)"##,
+            r##"{"workingRgb":"srgb|display-p3|adobe-rgb-compat|prophoto-compat|linear-srgb|rec2020","workingCmyk":"coated-cmyk","workingGray":"sgray|gray-gamma-2.2","policyRgb":"preserve|convert|off","policyGray":"preserve|convert|off","askOnMismatch":bool=true,"askOnPaste":bool=true,"askOnMissing":bool=false,"intent":"relative|perceptual|saturation|absolute","blendTextGamma":1.0..2.2|bool=1.45,"bpc":bool=true,"dither":bool=true,"monitorProfile":"auto|srgb|display-p3|adobe-rgb-compat|prophoto-compat|rec2020","reset":bool=false} (working spaces and the monitor profile also accept .icc paths; monitor `auto` = the main display's profile when the platform provides it, else sRGB; the reply's `monitorStatus` says which profile is in use and why: source auto|manual|fallback, reason)"##,
             always,
             color_settings,
             true,
@@ -1062,30 +1052,18 @@ mod tests {
             let mut s = session("rgb", depth);
             paint_rgb(&mut s);
             let before = doc(&s).layers[1].surface().unwrap().pixel(40, 8);
-            s.execute("image.mode.cmyk", json!({})).unwrap();
-            let d = doc(&s);
-            assert_eq!(d.mode, ColorMode::Cmyk);
-            assert_eq!(d.icc_profile.as_deref(), Some(&*Builtin::CoatedCmyk.profile().to_bytes()), "tagged with the destination");
-            let l = &d.layers[1];
-            assert_eq!(l.surface().unwrap().format().mode, ColorMode::Cmyk);
-            assert_eq!(l.mask.as_ref().unwrap().surface.format().mode, ColorMode::Grayscale, "masks untouched");
-            let gray = l.surface().unwrap().pixel(40, 8);
-            assert!((gray[4] - 0.5).abs() < 1e-2, "alpha kept: {gray:?}");
-            assert!(gray[..4].iter().all(|v| (0.0..=1.0).contains(v)));
-            // Red goes to M+Y heavy separation.
-            let red = l.surface().unwrap().pixel(8, 8);
-            assert!(red[1] > 0.7 && red[2] > 0.7 && red[0] < 0.2, "{depth}: {red:?}");
-            // Background white → no ink.
-            let bg = d.layers[0].surface().unwrap().pixel(60, 30);
-            assert!(bg[..4].iter().all(|v| *v < 0.01), "{bg:?}");
-            s.execute("image.mode.lab", json!({})).unwrap();
-            let lab = doc(&s).layers[1].surface().unwrap().pixel(40, 8);
-            assert!((lab[1] - 128.0 / 255.0).abs() < 0.03 && (lab[2] - 128.0 / 255.0).abs() < 0.03, "{lab:?}");
             s.execute("image.mode.grayscale", json!({"intent": "perceptual"})).unwrap();
+            let d = doc(&s);
+            assert_eq!(d.mode, ColorMode::Grayscale);
+            let l = &d.layers[1];
+            assert_eq!(l.surface().unwrap().format().mode, ColorMode::Grayscale);
+            assert!(l.mask.is_some(), "masks kept");
+            let gray = l.surface().unwrap().pixel(40, 8);
+            assert!((gray[1] - 0.5).abs() < 1e-2, "alpha kept: {gray:?}");
             s.execute("image.mode.rgb", json!({})).unwrap();
             let after = doc(&s).layers[1].surface().unwrap().pixel(40, 8);
             assert!((after[0] - before[0]).abs() < 0.04 && (after[0] - after[2]).abs() < 0.01, "{depth}: {before:?} -> {after:?}");
-            for _ in 0..4 {
+            for _ in 0..2 {
                 s.execute("edit.undo", json!({})).unwrap();
             }
             assert_eq!(doc(&s).mode, ColorMode::Rgb);
@@ -1094,16 +1072,18 @@ mod tests {
     }
 
     #[test]
-    fn rgb_lab_rgb_roundtrip_16bit() {
+    fn cmyk_and_lab_are_proof_targets_not_document_modes() {
         let mut s = session("rgb", 16);
         paint_rgb(&mut s);
-        let before = doc(&s).layers[1].surface().unwrap().pixel(8, 8);
-        s.execute("image.mode.lab", json!({})).unwrap();
-        s.execute("image.mode.rgb", json!({})).unwrap();
-        let after = doc(&s).layers[1].surface().unwrap().pixel(8, 8);
-        for k in 0..3 {
-            assert!((before[k] - after[k]).abs() < 1.0 / 255.0, "{before:?} -> {after:?}");
+        for cmd in ["image.mode.cmyk", "image.mode.lab", "image.mode.indexedColor", "image.mode.duotone", "image.mode.multichannel"] {
+            assert!(s.execute(cmd, json!({})).is_err(), "{cmd}");
         }
+        for profile in ["coated-cmyk", "lab-d50"] {
+            assert!(s.execute("edit.convertToProfile", json!({"profile": profile})).is_err(), "{profile}");
+            assert!(s.execute("edit.assignProfile", json!({"profile": profile})).is_err(), "{profile}");
+        }
+        assert_eq!(doc(&s).mode, ColorMode::Rgb);
+        assert_eq!(s.active().unwrap().history.past_len(), 2, "nothing recorded");
     }
 
     #[test]
@@ -1118,12 +1098,12 @@ mod tests {
         s.execute("edit.convertToProfile", json!({"profile": "srgb", "intent": "relative"})).unwrap();
         let px = doc(&s).layers[1].surface().unwrap().pixel(8, 8);
         assert!(px[0] > 0.99 && px[1] < 0.01, "P3 red clips to sRGB red: {px:?}");
-        s.execute("edit.convertToProfile", json!({"profile": "coated-cmyk", "intent": "perceptual"})).unwrap();
-        assert_eq!(doc(&s).mode, ColorMode::Cmyk);
+        s.execute("edit.convertToProfile", json!({"profile": "sgray", "intent": "perceptual"})).unwrap();
+        assert_eq!(doc(&s).mode, ColorMode::Grayscale);
         s.execute("edit.assignProfile", json!({"profile": "none"})).unwrap();
         assert!(doc(&s).icc_profile.is_none());
         let info = s.execute("edit.profileInfo", json!({})).unwrap();
-        assert_eq!(info["profile"]["colorSpace"], "Cmyk");
+        assert_eq!(info["profile"]["colorSpace"], "Gray");
         assert!(info["builtins"].as_array().unwrap().len() >= 10);
         assert!(s.execute("edit.convertToProfile", json!({"profile": "nope"})).is_err());
     }
@@ -1138,13 +1118,13 @@ mod tests {
             Ok(())
         })
         .unwrap();
-        s.execute("image.mode.cmyk", json!({})).unwrap();
+        s.execute("image.mode.grayscale", json!({})).unwrap();
         let l = &doc(&s).layers[1];
         let LayerContent::Fill(Fill::Solid(c)) = &l.content else { panic!() };
-        assert_eq!(c.mode, ColorMode::Cmyk);
-        assert!(c.c[0] > 0.6, "{c:?}");
+        assert_eq!(c.mode, ColorMode::Grayscale);
+        assert!(c.c[0] < 0.2, "blue is dark: {c:?}");
         let Effect::DropShadow(sh) = &l.effects.items[0] else { panic!() };
-        assert_eq!(sh.color.mode, ColorMode::Cmyk);
+        assert_eq!(sh.color.mode, ColorMode::Grayscale);
     }
 
     #[test]
@@ -1181,7 +1161,7 @@ mod tests {
     }
 
     #[test]
-    fn gray_and_cmyk_composite_profiles() {
+    fn gray_composite_profile() {
         let s = session("gray", 8);
         let p = composite_profile(doc(&s));
         assert_eq!(p.color_space, ColorSpace::Rgb);
@@ -1189,14 +1169,12 @@ mod tests {
         let mut o = [0.0f32; 3];
         t.eval(&[0.5, 0.5, 0.5], &mut o);
         assert!(o.iter().all(|v| (v - 0.5).abs() < 2e-3), "sGray displays as sRGB gray: {o:?}");
-        let s = session("cmyk", 8);
-        assert_eq!(composite_profile(doc(&s)).description, "sRGB IEC61966-2.1");
     }
 
-    /// `cargo test -p photocraft-engine --release -- --ignored bench_cmyk --nocapture`
+    /// `cargo test -p photocraft-engine --release -- --ignored bench_mode --nocapture`
     #[test]
     #[ignore]
-    fn bench_cmyk_conversion_6016() {
+    fn bench_mode_conversion_6016() {
         let mut s = Session::new();
         s.execute("file.new", json!({"width": 6016, "height": 6016, "mode": "rgb", "depth": 8})).unwrap();
         s.edit("noise", |doc, _| {
@@ -1216,11 +1194,11 @@ mod tests {
         .unwrap();
         let mut d = (*s.active().unwrap().doc).clone();
         let t = std::time::Instant::now();
-        convert_document(&mut d, Builtin::CoatedCmyk.profile(), Intent::RelativeColorimetric, true).unwrap();
+        convert_document(&mut d, Builtin::DisplayP3.profile(), Intent::RelativeColorimetric, true).unwrap();
         eprintln!("convert_document alone: {} ms", t.elapsed().as_millis());
         let t = std::time::Instant::now();
-        s.execute("image.mode.cmyk", json!({})).unwrap();
-        eprintln!("6016×6016 RGB8 → CMYK: {} ms", t.elapsed().as_millis());
+        s.execute("image.mode.grayscale", json!({})).unwrap();
+        eprintln!("6016×6016 RGB → Grayscale: {} ms", t.elapsed().as_millis());
     }
 }
 

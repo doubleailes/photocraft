@@ -233,13 +233,14 @@ fn fit_image_and_conditional_mode_change() {
     assert_eq!(r["changed"], false);
     s.execute("file.automate.fitImage", json!({"width": 1000, "height": 1000})).unwrap();
     assert_eq!(doc(&s).size.width, 1000);
-    let r = s.execute("file.automate.conditionalModeChange", json!({"from": ["cmyk"], "to": "grayscale"})).unwrap();
+    let r = s.execute("file.automate.conditionalModeChange", json!({"from": ["grayscale"], "to": "rgb"})).unwrap();
     assert_eq!(r["changed"], false);
-    s.execute("file.automate.conditionalModeChange", json!({"from": ["rgb", "lab"], "to": "grayscale"})).unwrap();
+    s.execute("file.automate.conditionalModeChange", json!({"from": ["rgb"], "to": "grayscale"})).unwrap();
     assert_eq!(doc(&s).mode, ColorMode::Grayscale);
     s.execute("file.automate.conditionalModeChange", json!({"to": "rgb"})).unwrap();
     assert_eq!(doc(&s).mode, ColorMode::Rgb);
     assert!(s.execute("file.automate.conditionalModeChange", json!({"to": "duotone"})).is_err());
+    assert!(s.execute("file.automate.conditionalModeChange", json!({"to": "cmyk"})).is_err());
 }
 
 #[test]

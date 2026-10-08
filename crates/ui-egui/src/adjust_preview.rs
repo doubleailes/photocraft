@@ -55,9 +55,6 @@ const SESSION_SHIFT: u32 = 40;
 
 /// Why `target` in `doc` can't preview as a clipped adjustment layer, or None when it can.
 pub fn unsupported(doc: &Document, target: LayerId) -> Option<&'static str> {
-    if !matches!(doc.mode, ColorMode::Rgb | ColorMode::Grayscale) {
-        return Some("colour mode composites through display RGB");
-    }
     let Some(l) = doc.layer(target) else { return Some("no target layer") };
     let LayerContent::Raster(s) = &l.content else { return Some("not a pixel layer") };
     if l.clipped {
@@ -114,7 +111,7 @@ pub fn with_settings(base: &Document, kind: &str, params: &Value) -> Result<Docu
 }
 
 fn set_adjustment(base: &Document, layer: LayerId, kind: &str, params: &Value) -> Result<Document, String> {
-    let adj = photocraft_engine::adjust_params::from_params(kind, params, None, base.mode).map_err(|e| e.to_string())?;
+    let adj = photocraft_engine::adjust_params::from_params(kind, params, None).map_err(|e| e.to_string())?;
     if base.mode == ColorMode::Grayscale && !keeps_gray(&adj) {
         return Err("colour result in a grayscale document".into());
     }

@@ -9,7 +9,7 @@ use photocraft_doc::{Document, Layer, LayerContent, LayerId, Slice, TextLayer};
 use photocraft_format::*;
 use photocraft_raster::Rgba8Image;
 
-const MODES: [ColorMode; 4] = [ColorMode::Rgb, ColorMode::Grayscale, ColorMode::Cmyk, ColorMode::Lab];
+const MODES: [ColorMode; 2] = [ColorMode::Rgb, ColorMode::Grayscale];
 
 fn check_zip(mode: ColorMode, depth: SampleType) {
     let doc = rich_doc(mode, depth);
@@ -30,9 +30,7 @@ macro_rules! zip_cases {
 
 zip_cases! {
     rgb_u8: Rgb, U8; rgb_u16: Rgb, U16; rgb_f16: Rgb, F16; rgb_f32: Rgb, F32;
-    gray_u8: Grayscale, U8; gray_u16: Grayscale, U16; gray_f32: Grayscale, F32;
-    cmyk_u8: Cmyk, U8; cmyk_u16: Cmyk, U16; cmyk_f32: Cmyk, F32;
-    lab_u8: Lab, U8; lab_u16: Lab, U16; lab_f32: Lab, F32;
+    gray_u8: Grayscale, U8; gray_u16: Grayscale, U16; gray_f16: Grayscale, F16; gray_f32: Grayscale, F32;
 }
 
 #[test]
@@ -256,7 +254,7 @@ fn manifest_is_human_readable_json() {
 
 #[test]
 fn save_is_deterministic() {
-    let doc = rich_doc(ColorMode::Cmyk, SampleType::U16);
+    let doc = rich_doc(ColorMode::Rgb, SampleType::F16);
     let a = save_to_bytes(&doc, &SaveOptions::default()).unwrap();
     let b = save_to_bytes(&doc, &SaveOptions::default()).unwrap();
     assert_eq!(a, b);

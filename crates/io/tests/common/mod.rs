@@ -48,9 +48,8 @@ pub fn mask_surface(sample: SampleType, r: Rect, default: f32, seed: u32) -> Sur
 
 pub fn fill_color(mode: ColorMode) -> Color {
     match mode {
-        ColorMode::Cmyk => Color { mode: ColorMode::Cmyk, c: [0.2, 0.4, 0.6, 0.1], alpha: 1.0 },
         ColorMode::Grayscale => Color::gray(0.25),
-        _ => Color::rgb(1.0, 0.5, 0.25),
+        ColorMode::Rgb => Color::rgb(1.0, 0.5, 0.25),
     }
 }
 
@@ -150,8 +149,6 @@ pub fn gen_doc(mode: ColorMode, depth: SampleType, f: Features) -> Document {
             Adjustment::Levels {
                 master: LevelsChannel { in_black: g(10), in_white: g(240), gamma: 1.2, out_black: 0.0, out_white: 1.0 },
                 per_channel: Default::default(),
-                space: tone_space(mode),
-                black: Default::default(),
             },
             Adjustment::Curves {
                 master: vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: g(128), output: g(150) }, CurvePoint { input: 1.0, output: 1.0 }],
@@ -160,8 +157,6 @@ pub fn gen_doc(mode: ColorMode, depth: SampleType, f: Features) -> Document {
                     vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }],
                     vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }],
                 ],
-                space: tone_space(mode),
-                black: Vec::new(),
             },
             Adjustment::Unsupported { psd_key: "selc".into(), raw: vec![0, 1, 0, 0] },
         ];
@@ -317,15 +312,6 @@ pub fn max_diff(a: &[[f32; 4]], b: &[[f32; 4]]) -> f32 {
         }
     }
     m
-}
-
-/// The Levels/Curves channel space a PSD of `mode` stores (its records are the document's channels).
-fn tone_space(mode: ColorMode) -> photocraft_doc::adjust::ToneSpace {
-    match mode {
-        ColorMode::Cmyk => photocraft_doc::adjust::ToneSpace::Cmyk,
-        ColorMode::Lab => photocraft_doc::adjust::ToneSpace::Lab,
-        _ => photocraft_doc::adjust::ToneSpace::Rgb,
-    }
 }
 
 /// Strict structural check of a written PSD/PSB (#200): every tagged block must

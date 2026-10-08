@@ -71,7 +71,7 @@ pub fn decode_source(file_name: &str, bytes: &[u8]) -> Result<Document> {
 /// (`linear_doc`), so integer contents are linearised to match it.
 fn decode_for(file_name: &str, bytes: &[u8], host: PixelFormat) -> Result<Document> {
     let mut doc = decode_source(file_name, bytes)?;
-    if host.sample.is_float() && crate::linear_doc::linear_profile(host.mode).is_some() {
+    if host.sample.is_float() {
         crate::linear_doc::linearize(&mut doc)?;
     }
     Ok(doc)

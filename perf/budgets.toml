@@ -365,10 +365,8 @@ not_measurable = "the live renderer and the release re-render are UI-side; needs
 id = "P33"
 title = "Brush dab on A4 300 ppi CMYK (dab to screen)"
 issue = 211
-bench = "perf_scenarios"
-row = "brush dab on A4 300 ppi CMYK + refresh"
-budget_ms = 6
-enforce = false  # over budget in the 2026-10-05 baseline
+target = "≤ 6 ms"
+not_measurable = "CMYK documents were removed (docs/ocio-migration.md): CMYK files open as RGB"
 
 [[scenario]]
 id = "P34"

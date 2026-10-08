@@ -110,13 +110,11 @@ fn clone_stamp_sample_all_layers_onto_empty_layer_and_opacity() {
 }
 
 #[test]
-fn clone_stamp_respects_selection_and_cmyk() {
-    let mut s = session(64, 32, 8, "cmyk");
+fn clone_stamp_respects_selection() {
+    let mut s = session(64, 32, 8, "rgb");
     paint_layer(&mut s, |x, _| if x < 32 { [0.0, 0.0, 1.0, 1.0] } else { [1.0, 1.0, 0.0, 1.0] });
     s.execute("select.rect", json!({"x": 40, "y": 0, "width": 8, "height": 32})).unwrap();
     s.execute("paint.cloneStamp", json!({"points": [[36, 16], [56, 16]], "offset": [-30, 0], "size": 8, "hardness": 100})).unwrap();
-    // CMYK pixels display through the CMYK profile, so sRGB blue/yellow come back as their
-    // (less saturated) in-gamut CMYK equivalents.
     let (inside, outside) = (rgba(&s, 44, 16), rgba(&s, 52, 16));
     assert!(inside[2] > inside[0] + 0.2, "inside the selection: cloned blue {inside:?}");
     assert!(outside[2] < 0.3 && outside[0] > 0.8, "outside the selection: untouched yellow {outside:?}");

@@ -142,15 +142,6 @@ fn bad_params_and_states_fail_without_changing_anything() {
         assert_eq!(s.active_index(), Some(0), "{p}: the source stays active");
         assert_eq!(doc(&s, 1).layers.len(), 1, "{p}");
     }
-    // An Indexed destination has no layers to add to.
-    s.set_active(1);
-    s.edit("indexed", |d, _| {
-        d.mode = ColorMode::Indexed;
-        Ok(())
-    })
-    .unwrap();
-    s.set_active(0);
-    assert!(s.execute(cmd, json!({"document": 1})).is_err());
     // A single open document: nothing to copy to.
     s.close(1);
     assert!(!s.is_enabled(cmd));

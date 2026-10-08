@@ -470,10 +470,8 @@ fn blend_if_channel(v: &Value, mode: ColorMode) -> Option<usize> {
     }
     let name = v.as_str().unwrap_or("gray").to_ascii_lowercase();
     let names: &[&str] = match mode {
-        ColorMode::Rgb | ColorMode::Indexed => &["red", "green", "blue"],
-        ColorMode::Cmyk => &["cyan", "magenta", "yellow", "black"],
-        ColorMode::Lab => &["lightness", "a", "b"],
-        _ => &[],
+        ColorMode::Rgb => &["red", "green", "blue"],
+        ColorMode::Grayscale => &[],
     };
     if name == "gray" || name == "grey" {
         return Some(usize::from(n == 1));

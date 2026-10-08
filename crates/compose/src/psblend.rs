@@ -71,13 +71,6 @@ fn hard_mix_ps(cb: f32, cs: f32) -> f32 {
     if vivid_light_generic(cb, cs) >= 0.5 - 1e-6 { 1.0 } else { 0.0 }
 }
 
-thread_local! {
-    /// Set while rendering a Lab document: Normal blending mixes backdrop and source in CIELAB
-    /// (Photoshop composites Lab documents in Lab; an anti-aliased edge between two colours
-    /// differs by up to 14 / 255 from an sRGB mix: psd-tools stroke-color-descriptors-lab).
-    pub static LAB_MIX: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
 /// `B(Cb, Cs)` with Photoshop's variants.
 pub fn blend_rgb(mode: BlendMode, cb: [f32; 3], cs: [f32; 3]) -> [f32; 3] {
     match mode {
@@ -98,15 +91,6 @@ pub fn composite(mode: BlendMode, backdrop: [f32; 4], source: [f32; 4], opacity:
         return backdrop;
     }
     let ao = as_ + ab * (1.0 - as_);
-    if mode == BlendMode::Normal && LAB_MIX.with(|l| l.get()) && ab > 0.0 && ao > 0.0 {
-        let lb = photocraft_color::convert::srgb_to_lab([backdrop[0], backdrop[1], backdrop[2]]);
-        let ls = photocraft_color::convert::srgb_to_lab([source[0], source[1], source[2]]);
-        let kb = ab * (1.0 - as_) / ao;
-        let k = as_ / ao;
-        let m: [f32; 3] = std::array::from_fn(|i| lb[i] * kb + ls[i] * k);
-        let r = photocraft_color::convert::lab_to_srgb(m);
-        return [r[0], r[1], r[2], ao];
-    }
     if mode == BlendMode::Normal {
         // Fast path: B(Cb, Cs) = Cs.
         if ao <= 0.0 {

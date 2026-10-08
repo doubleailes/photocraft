@@ -32,23 +32,6 @@ impl Default for LevelsChannel {
     }
 }
 
-/// Which document channels the per-channel records of Levels and Curves address. Compositing
-/// happens in display RGB; `Cmyk` and `Lab` records are applied to the pixel converted into that
-/// space (the same conversions the document's surfaces use), so ink and Lab channel edits behave
-/// like Photoshop's in CMYK and Lab documents. Grayscale documents use `Rgb` with the master record.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ToneSpace {
-    /// `per_channel` = red, green, blue.
-    #[default]
-    Rgb,
-    /// `per_channel` = cyan, magenta, yellow plus `black`; values are channel brightness
-    /// (1 - ink), and the master record applies to all four inks.
-    Cmyk,
-    /// `per_channel` = lightness, a, b (stored 0..=1 like Lab surfaces); there is no composite
-    /// record in Lab, so the master is ignored.
-    Lab,
-}
-
 /// One of Hue/Saturation's six colour ranges (reds, yellows, greens, cyans, blues, magentas).
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct HueRange {
@@ -127,25 +110,15 @@ pub enum Adjustment {
         contrast: f32,
         legacy: bool,
     },
-    /// Composite channel first, then R, G, B (or the channels `space` names).
+    /// Composite channel first, then R, G, B.
     Levels {
         master: LevelsChannel,
         per_channel: [LevelsChannel; 3],
-        #[serde(default)]
-        space: ToneSpace,
-        /// The black ink channel when `space` is [`ToneSpace::Cmyk`].
-        #[serde(default)]
-        black: LevelsChannel,
     },
-    /// Master curve then R, G, B curves (or the channels `space` names).
+    /// Master curve then R, G, B curves.
     Curves {
         master: Vec<CurvePoint>,
         per_channel: [Vec<CurvePoint>; 3],
-        #[serde(default)]
-        space: ToneSpace,
-        /// The black ink curve when `space` is [`ToneSpace::Cmyk`] (empty = identity).
-        #[serde(default)]
-        black: Vec<CurvePoint>,
     },
     Exposure {
         exposure: f32,
@@ -253,11 +226,11 @@ impl Adjustment {
 
     pub fn identity_curves() -> Self {
         let line = || vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }];
-        Adjustment::Curves { master: line(), per_channel: [line(), line(), line()], space: ToneSpace::Rgb, black: Vec::new() }
+        Adjustment::Curves { master: line(), per_channel: [line(), line(), line()] }
     }
 
     pub fn identity_levels() -> Self {
-        Adjustment::Levels { master: LevelsChannel::default(), per_channel: Default::default(), space: ToneSpace::Rgb, black: LevelsChannel::default() }
+        Adjustment::Levels { master: LevelsChannel::default(), per_channel: Default::default() }
     }
 }
 
@@ -288,8 +261,9 @@ mod tests {
     fn old_files_get_neutral_new_fields() {
         let a: Adjustment = serde_json::from_str(r#"{"HueSaturation":{"hue":1.0,"saturation":2.0,"lightness":3.0,"colorize":false}}"#).unwrap();
         assert!(matches!(a, Adjustment::HueSaturation { ranges, .. } if ranges == HueRange::defaults()));
-        let c: Adjustment = serde_json::from_str(r#"{"Curves":{"master":[],"per_channel":[[],[],[]]}}"#).unwrap();
-        assert!(matches!(c, Adjustment::Curves { space: ToneSpace::Rgb, .. }));
+        // Files from before CMYK and Lab were removed carry `space` and `black`: ignored.
+        let c: Adjustment = serde_json::from_str(r#"{"Curves":{"master":[],"per_channel":[[],[],[]],"space":"Cmyk","black":[]}}"#).unwrap();
+        assert!(matches!(c, Adjustment::Curves { .. }));
         let g: Adjustment = serde_json::from_str(r#"{"GradientMap":{"stops":[],"reverse":true}}"#).unwrap();
         assert!(matches!(g, Adjustment::GradientMap { dither: false, .. }));
     }

@@ -58,10 +58,15 @@ fn file_new_variants() {
     let mut s = Session::new();
     s.execute("file.new", json!({"width": 10, "height": 5, "background": "transparent"})).unwrap();
     assert_eq!(s.active().unwrap().doc.layers[0].name, "Layer 1");
-    s.execute("file.new", json!({"width": 10, "height": 5, "mode": "cmyk", "depth": 16})).unwrap();
+    s.execute("file.new", json!({"width": 10, "height": 5, "mode": "gray", "depth": 32})).unwrap();
     let d = &s.active().unwrap().doc;
-    assert_eq!(d.mode, photocraft_color::ColorMode::Cmyk);
-    assert_eq!(d.depth, photocraft_color::SampleType::U16);
+    assert_eq!(d.mode, photocraft_color::ColorMode::Grayscale);
+    assert_eq!(d.depth, photocraft_color::SampleType::F32);
+    // Modes PhotoCraft documents no longer have fall back to RGB.
+    s.execute("file.new", json!({"width": 10, "height": 5, "mode": "cmyk", "depth": 8})).unwrap();
+    let d = &s.active().unwrap().doc;
+    assert_eq!((d.mode, d.depth), (photocraft_color::ColorMode::Rgb, photocraft_color::SampleType::F16));
+    s.execute("file.close", json!({})).unwrap();
     s.execute("file.new", json!({"background": "#ff0000", "width": 4, "height": 4})).unwrap();
     assert_eq!(px(&mut s, 1, 1), vec![1.0, 0.0, 0.0, 1.0]);
     assert_eq!(s.documents().len(), 3);

@@ -53,14 +53,12 @@ fn every_gallery_filter_runs_at_every_depth_and_undoes() {
 }
 
 #[test]
-fn gallery_filters_run_in_other_colour_models() {
-    for mode in ["gray", "cmyk", "lab"] {
-        for f in [GalleryFilter::Cutout, GalleryFilter::GraphicPen, GalleryFilter::Texturizer, GalleryFilter::StainedGlass] {
-            let mut s = session(16, mode);
-            let before = pixels(&s);
-            s.execute(f.command_id(), json!({})).unwrap_or_else(|e| panic!("{} {mode}: {e}", f.key()));
-            assert_ne!(pixels(&s), before, "{} {mode}", f.key());
-        }
+fn gallery_filters_run_in_grayscale() {
+    for f in [GalleryFilter::Cutout, GalleryFilter::GraphicPen, GalleryFilter::Texturizer, GalleryFilter::StainedGlass] {
+        let mut s = session(16, "gray");
+        let before = pixels(&s);
+        s.execute(f.command_id(), json!({})).unwrap_or_else(|e| panic!("{}: {e}", f.key()));
+        assert_ne!(pixels(&s), before, "{}", f.key());
     }
 }
 

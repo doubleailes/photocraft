@@ -46,7 +46,6 @@ struct Ex {
     text_styles: photocraft_doc::TextStyles,
     mask_fmt: PixelFormat,
     cc: usize,
-    cmyk: bool,
     version: Version,
     next_id: u32,
     /// PSD ids assigned to document layers (kept from `psd_id` when unique).
@@ -223,9 +222,7 @@ fn upsert(raw: &mut Vec<([u8; 4], Vec<u8>)>, key: &[u8; 4], data: Vec<u8>, befor
 fn psd_mode(m: ColorMode) -> PsdMode {
     match m {
         ColorMode::Grayscale => PsdMode::Grayscale,
-        ColorMode::Cmyk => PsdMode::Cmyk,
-        ColorMode::Lab => PsdMode::Lab,
-        _ => PsdMode::Rgb,
+        ColorMode::Rgb => PsdMode::Rgb,
     }
 }
 
@@ -266,13 +263,8 @@ impl Ex {
         if r.is_empty() {
             return (PsdRect::default(), self.empty_channels());
         }
-        let mut bytes = s.to_interleaved(r);
-        if self.fmt.mode == ColorMode::Lab && self.fmt.sample == SampleType::U16 {
-            crate::pixels::lab16_chroma(&mut bytes, self.cc + 1, false);
-        }
-        let mut invert = vec![self.cmyk; self.cc];
-        invert.push(false);
-        let planes = deinterleave(&bytes, self.cc + 1, self.fmt.sample, &invert);
+        let bytes = s.to_interleaved(r);
+        let planes = deinterleave(&bytes, self.cc + 1, self.fmt.sample, &vec![false; self.cc + 1]);
         drop(bytes);
         let (w, h) = (r.width() as usize, r.height() as usize);
         // Alpha (-1) first, then the colour channels; each compressed on its own thread.
@@ -430,9 +422,6 @@ impl Ex {
                 let channels = match self.fmt.mode {
                     ColorMode::Rgb => adjust_map::Channels::Rgb,
                     ColorMode::Grayscale => adjust_map::Channels::Gray,
-                    ColorMode::Cmyk => adjust_map::Channels::Cmyk,
-                    ColorMode::Lab => adjust_map::Channels::Lab,
-                    _ => adjust_map::Channels::Other,
                 };
                 let cged = raw.iter().find(|(k, _)| k == b"CgEd").map(|(_, d)| d.clone());
                 let keep = raw.iter().any(|(k, d)| adjust_map::ADJUSTMENT_KEYS.contains(&k) && adjust_map::parse(k, d, cged.as_deref(), channels) == *a);
@@ -903,13 +892,9 @@ fn guides_resource(doc: &Document) -> Vec<u8> {
     v
 }
 
-fn cmyk_of(fmt: &PixelFormat) -> bool {
-    fmt.mode == ColorMode::Cmyk
-}
-
 /// The merged image's planes (colour channels, then alpha), big-endian, matted against white
 /// when `matte`; with whether any pixel needs the alpha channel and whether any is below 1.
-fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> (Vec<u8>, bool, bool) {
+fn merged_planes(doc: &Document, fmt: &PixelFormat, matte: bool) -> (Vec<u8>, bool, bool) {
     let sample = fmt.sample;
     let cc = fmt.mode.color_channels();
     let bps = sample.bytes();
@@ -920,8 +905,6 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
     let white = photocraft_raster::from_rgba(fmt, [1.0, 1.0, 1.0, 1.0]);
     let canvas = doc.bounds();
     let w = canvas.width() as usize;
-    let space = photocraft_compose::cmyk_space(doc);
-    let lab16 = fmt.mode == ColorMode::Lab && sample == SampleType::U16;
     let _ = photocraft_compose::render_bands(doc, canvas, 0, |band| -> Result<(), ()> {
         // Retain alpha whenever it differs from opaque at the stored precision.
         has_alpha |= band.px.iter().any(|p| match sample {
@@ -933,23 +916,17 @@ fn merged_planes(doc: &Document, fmt: &PixelFormat, cmyk: bool, matte: bool) -> 
         let start = (band.rect.y0 - canvas.y0) as usize * w;
         // Converted and encoded on all cores, then copied into each plane.
         let parts = crate::pixels::par_map(crate::pixels::bands(band.px.len()), |range| {
-            // The composite came through the document's CMYK profile: convert back through it too.
-            photocraft_color::convert::with_cmyk_space(space.as_ref(), || {
-                let mut out: Vec<Vec<u8>> = vec![Vec::with_capacity(range.len() * bps); cc + 1];
-                let mut v = [0.0f32; 5];
-                for p in &band.px[range.clone()] {
-                    photocraft_raster::from_rgba_into(fmt, *p, &mut v);
-                    for c in 0..=cc {
-                        // Matte against white like Photoshop (see `pixels::matte`).
-                        let m = if c < cc && matte { crate::pixels::matte(v[c], v[cc], white[c]) } else { v[c] };
-                        let x = if cmyk && c < cc { 1.0 - m } else { m };
-                        // 16-bit Lab a*/b* use Photoshop's 0..65280 scale (`pixels::lab16_chroma`).
-                        let x = if lab16 && (c == 1 || c == 2) { x * (crate::pixels::LAB16_CHROMA_MAX / 65535.0) } else { x };
-                        encode_be(x, sample, &mut out[c]);
-                    }
+            let mut out: Vec<Vec<u8>> = vec![Vec::with_capacity(range.len() * bps); cc + 1];
+            let mut v = [0.0f32; 4];
+            for p in &band.px[range.clone()] {
+                photocraft_raster::from_rgba_into(fmt, *p, &mut v);
+                for c in 0..=cc {
+                    // Matte against white like Photoshop (see `pixels::matte`).
+                    let x = if c < cc && matte { crate::pixels::matte(v[c], v[cc], white[c]) } else { v[c] };
+                    encode_be(x, sample, &mut out[c]);
                 }
-                (range.start, out)
-            })
+            }
+            (range.start, out)
         });
         for (at, part) in parts {
             for (c, src) in part.iter().enumerate() {
@@ -1004,65 +981,58 @@ pub(crate) fn estimate_psd_size(doc: &Document) -> Option<u64> {
     let width = u64::from(doc.size.width);
     let height = u64::from(doc.size.height);
 
-    if doc.mode == ColorMode::Multichannel {
-        let channels = u64::try_from(doc.channels.len().clamp(1, 56)).ok()?;
-        let sample_bytes = u64::try_from(if doc.depth == SampleType::F32 { SampleType::U16.bytes() } else { doc.depth.bytes() }).ok()?;
-        add_plane_estimate(&mut raw_bytes, &mut rows, width, height, channels, sample_bytes)?;
-    } else {
-        let format = doc.pixel_format();
-        let color_channels = u64::try_from(format.mode.color_channels()).ok()?;
-        let bytes_per_sample = u64::try_from(crate::pixels::psd_sample(format.sample).bytes()).ok()?;
-        let layer_channels = color_channels.checked_add(1)?;
+    let format = doc.pixel_format();
+    let color_channels = u64::try_from(format.mode.color_channels()).ok()?;
+    let bytes_per_sample = u64::try_from(crate::pixels::psd_sample(format.sample).bytes()).ok()?;
+    let layer_channels = color_channels.checked_add(1)?;
 
-        for (_, _, layer) in doc.walk() {
-            structural_bytes = structural_bytes.checked_add(PSD_ESTIMATE_LAYER_OVERHEAD)?.checked_add(u64::try_from(layer.name.len()).ok()?)?;
-            for (_, data) in &layer.psd_blocks {
-                structural_bytes = structural_bytes.checked_add(u64::try_from(data.len()).ok()?)?;
-            }
+    for (_, _, layer) in doc.walk() {
+        structural_bytes = structural_bytes.checked_add(PSD_ESTIMATE_LAYER_OVERHEAD)?.checked_add(u64::try_from(layer.name.len()).ok()?)?;
+        for (_, data) in &layer.psd_blocks {
+            structural_bytes = structural_bytes.checked_add(u64::try_from(data.len()).ok()?)?;
+        }
 
-            let surface = match &layer.content {
-                LayerContent::Fill(fill) => {
-                    let mut fill_width = width;
-                    let mut fill_height = height;
-                    if let Some(cache) = &layer.fill_cache
-                        && cache.fill == *fill
-                    {
-                        let (cache_width, cache_height) = surface_dimensions(&cache.surface)?;
-                        fill_width = fill_width.max(cache_width);
-                        fill_height = fill_height.max(cache_height);
-                    }
-                    add_plane_estimate(&mut raw_bytes, &mut rows, fill_width, fill_height, layer_channels, bytes_per_sample)?;
-                    None
+        let surface = match &layer.content {
+            LayerContent::Fill(fill) => {
+                let mut fill_width = width;
+                let mut fill_height = height;
+                if let Some(cache) = &layer.fill_cache
+                    && cache.fill == *fill
+                {
+                    let (cache_width, cache_height) = surface_dimensions(&cache.surface)?;
+                    fill_width = fill_width.max(cache_width);
+                    fill_height = fill_height.max(cache_height);
                 }
-                _ => layer.surface(),
-            };
-            if let Some(surface) = surface {
-                let (surface_width, surface_height) = surface_dimensions(surface)?;
-                add_plane_estimate(&mut raw_bytes, &mut rows, surface_width, surface_height, layer_channels, bytes_per_sample)?;
+                add_plane_estimate(&mut raw_bytes, &mut rows, fill_width, fill_height, layer_channels, bytes_per_sample)?;
+                None
             }
-            if let Some(mask) = &layer.mask {
-                let (mask_width, mask_height) = surface_dimensions(&mask.surface)?;
-                add_plane_estimate(&mut raw_bytes, &mut rows, mask_width, mask_height, 1, bytes_per_sample)?;
-            }
-            if let LayerContent::Smart(smart) = &layer.content
-                && let photocraft_doc::SmartSource::Embedded { bytes, .. } = &smart.source
-            {
-                structural_bytes = structural_bytes.checked_add(u64::try_from(bytes.len()).ok()?)?;
-            }
+            _ => layer.surface(),
+        };
+        if let Some(surface) = surface {
+            let (surface_width, surface_height) = surface_dimensions(surface)?;
+            add_plane_estimate(&mut raw_bytes, &mut rows, surface_width, surface_height, layer_channels, bytes_per_sample)?;
         }
-
-        let max_extra_channels = 56usize.saturating_sub(format.mode.color_channels() + 1);
-        let mut extra_channels = doc.channels.len().min(max_extra_channels);
-        if doc.quick_mask.is_some() && extra_channels < max_extra_channels {
-            extra_channels += 1;
+        if let Some(mask) = &layer.mask {
+            let (mask_width, mask_height) = surface_dimensions(&mask.surface)?;
+            add_plane_estimate(&mut raw_bytes, &mut rows, mask_width, mask_height, 1, bytes_per_sample)?;
         }
-        let merged_channels = color_channels.checked_add(1)?.checked_add(u64::try_from(extra_channels).ok()?)?;
-        add_plane_estimate(&mut raw_bytes, &mut rows, width, height, merged_channels, bytes_per_sample)?;
-        for channel in doc.channels.iter().take(extra_channels) {
-            structural_bytes = structural_bytes.checked_add(u64::try_from(channel.name.len()).ok()?)?;
+        if let LayerContent::Smart(smart) = &layer.content
+            && let photocraft_doc::SmartSource::Embedded { bytes, .. } = &smart.source
+        {
+            structural_bytes = structural_bytes.checked_add(u64::try_from(bytes.len()).ok()?)?;
         }
     }
 
+    let max_extra_channels = 56usize.saturating_sub(format.mode.color_channels() + 1);
+    let mut extra_channels = doc.channels.len().min(max_extra_channels);
+    if doc.quick_mask.is_some() && extra_channels < max_extra_channels {
+        extra_channels += 1;
+    }
+    let merged_channels = color_channels.checked_add(1)?.checked_add(u64::try_from(extra_channels).ok()?)?;
+    add_plane_estimate(&mut raw_bytes, &mut rows, width, height, merged_channels, bytes_per_sample)?;
+    for channel in doc.channels.iter().take(extra_channels) {
+        structural_bytes = structural_bytes.checked_add(u64::try_from(channel.name.len()).ok()?)?;
+    }
     structural_bytes = structural_bytes
         .checked_add(u64::try_from(doc.icc_profile.as_ref().map_or(0, |profile| profile.len())).ok()?)?
         .checked_add(u64::try_from(doc.metadata.xmp.as_ref().map_or(0, String::len)).ok()?)?
@@ -1088,9 +1058,6 @@ pub(crate) fn psd_size_exceeds_limit(doc: &Document) -> bool {
 
 /// [`document_to_psd_with`] for a document embedded `depth` smart objects deep.
 fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -> (PsdFile, Vec<String>) {
-    if doc.mode == ColorMode::Multichannel {
-        return crate::multichannel_map::document_to_psd(doc, opts.force_psb);
-    }
     // PSD has no half float: F16 documents are exported as 32-bit float (lossless widening).
     let doc_fmt = doc.pixel_format();
     let fmt = doc_fmt.with_sample(crate::pixels::psd_sample(doc_fmt.sample));
@@ -1105,7 +1072,6 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         text_styles: doc.text_styles.clone(),
         mask_fmt: PixelFormat::new(ColorMode::Grayscale, sample, false),
         cc,
-        cmyk: fmt.mode == ColorMode::Cmyk,
         version,
         next_id: 0,
         layer_ids: Default::default(),
@@ -1153,9 +1119,9 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
     // Merged composite, rendered and encoded in bands (no full-size float composite). Matting
     // against white only changes pixels with alpha < 1; if some are slightly translucent but all
     // round to opaque (so no alpha channel is written), encode once more without the matte.
-    let (mut planes, has_alpha, translucent) = merged_planes(doc, &fmt, cmyk_of(&fmt), opts.merged_matte);
+    let (mut planes, has_alpha, translucent) = merged_planes(doc, &fmt, opts.merged_matte);
     if !has_alpha && translucent && opts.merged_matte {
-        planes = merged_planes(doc, &fmt, cmyk_of(&fmt), false).0;
+        planes = merged_planes(doc, &fmt, false).0;
     }
     let n = doc.size.area() as usize;
     if !has_alpha {

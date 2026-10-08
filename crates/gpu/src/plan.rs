@@ -15,7 +15,6 @@
 use photocraft_color::BlendMode;
 use photocraft_compose::adjust::{self, Transfer};
 use photocraft_compose::effects::has_effects;
-use photocraft_doc::adjust::ToneSpace;
 use photocraft_doc::{Adjustment, Document, Effect, Fill, FxPaint, GlobalLight, Glow, Gradient, Layer, LayerContent, LayerId, Pattern, StrokePosition};
 use photocraft_geom::Rect;
 use photocraft_raster::Surface;
@@ -310,9 +309,6 @@ impl<'a> DocCtx<'a> {
 
 /// Build the pass list for `doc`.
 pub fn plan(doc: &Document) -> Result<Plan<'_>, Unsupported> {
-    if doc.mode == photocraft_color::ColorMode::Multichannel {
-        return Err(Unsupported("Multichannel inks (printed on the CPU)".into()));
-    }
     let mut p = Planner::new(DocCtx::of(doc));
     let root = p.clear();
     // Start at the topmost layer that hides everything beneath it (an opaque fill layer): the
@@ -360,8 +356,6 @@ pub const F_STROKE_OUT: u32 = 1024;
 pub const F_FIRST: u32 = 2048;
 /// `Lerp` per channel: weights in `p0` (channel restrictions), no opacity or mask.
 pub const F_CHANNELS: u32 = 4096;
-/// Lab document: Normal blending mixes in CIELAB (`psblend::LAB_MIX`).
-pub const F_LAB: u32 = 65536;
 /// `Lerp`: A rounded to `p0.x` steps per unit (adjustment results on integer documents).
 pub const F_QUANT: u32 = 32768;
 /// `Lerp` as A + (B − C) premultiplied (layers clipped to pass-through groups).
@@ -424,9 +418,6 @@ impl<'a> Planner<'a> {
     fn emit(&mut self, mut pass: Pass<'a>) -> Slot {
         let dst = self.alloc();
         pass.dst = dst;
-        if self.cx.mode == photocraft_color::ColorMode::Lab {
-            pass.flags |= F_LAB;
-        }
         let (a, b, c, d) = (pass.a, pass.b, pass.c, pass.d);
         self.passes.push(pass);
         for s in [a, b, c, d].into_iter().flatten() {
@@ -875,9 +866,6 @@ impl<'a> Planner<'a> {
 
     /// adjust::apply_with on a slot (consumes it).
     fn adjust(&mut self, adj: &Adjustment, src: Slot) -> Result<Slot, Unsupported> {
-        if !adjustment_on_gpu(adj) {
-            return Err(Unsupported(format!("{} on CMYK/Lab channels (evaluated on the CPU)", adj.label())));
-        }
         let mut p = Pass::new(Kernel::Adjust, 0);
         p.a = Some(src);
         let (kind, params, lut) = adjustment_program(adj, self.cx.transfer, self.cx.depth);
@@ -1426,12 +1414,6 @@ fn to_row(t: &[f32]) -> [f32; 4096] {
         *o = *v;
     }
     row
-}
-
-/// Whether the adjustment kernel can evaluate `adj`: Levels and Curves on CMYK ink or Lab
-/// channels convert through ICC profiles per pixel, which only the CPU does.
-pub fn adjustment_on_gpu(adj: &Adjustment) -> bool {
-    !matches!(adj, Adjustment::Levels { space: ToneSpace::Cmyk | ToneSpace::Lab, .. } | Adjustment::Curves { space: ToneSpace::Cmyk | ToneSpace::Lab, .. })
 }
 
 /// A tone transfer as the shader's `t_decode`/`t_encode` exponent (0: the sRGB curve).

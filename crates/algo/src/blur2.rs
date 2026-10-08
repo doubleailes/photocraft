@@ -304,7 +304,6 @@ pub(crate) fn lens_blur(src: &Image, out: Rect, ctx: &Ctx, spec: &LensSpec) -> V
     let boost = spec.brightness.clamp(0.0, 100.0) / 100.0 * 4.0;
     if boost > 0.0 {
         let th = spec.threshold.clamp(0.0, 255.0) / 255.0;
-        let sub = crate::fxutil::subtractive(ctx);
         for px in p.chunks_exact_mut(n) {
             let a = if ctx.alpha { px[n - 1] } else { 1.0 };
             if a <= 0.0 {
@@ -317,7 +316,7 @@ pub(crate) fn lens_blur(src: &Image, out: Rect, ctx: &Ctx, spec: &LensSpec) -> V
             let l = luma(ctx, &st[..n]);
             let k = 1.0 + boost * smoothstep(th, th + 0.02, l);
             for v in px.iter_mut().take(cc) {
-                *v = if sub { a - (a - *v) / k } else { *v * k };
+                *v *= k;
             }
         }
     }

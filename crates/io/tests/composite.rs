@@ -15,15 +15,7 @@ fn check_export_oracle(d: &photocraft_doc::Document, tol: f32) {
     let f = PsdFile::from_bytes(&r.bytes).unwrap();
     let merged = merged_composite(&f).unwrap();
     let d2 = import("x.psd", &r.bytes).unwrap().document;
-    let mut ours = photocraft_compose::flatten(&d2).px;
-    if d.mode == ColorMode::Cmyk {
-        // The merged CMYK image is the RGB composite separated through the CMYK profile, which
-        // gamut-maps colours that blend modes push outside CMYK: project ours the same way.
-        let fmt = d.pixel_format();
-        for p in &mut ours {
-            *p = photocraft_raster::to_rgba(&fmt, &photocraft_raster::from_rgba(&fmt, *p));
-        }
-    }
+    let ours = photocraft_compose::flatten(&d2).px;
     let m = max_diff(&ours, &merged);
     assert!(m <= tol, "max diff {m} > {tol}");
 }
@@ -42,12 +34,6 @@ oracle!(oracle_rgb16, ColorMode::Rgb, SampleType::U16, Features::ALL, TOL);
 oracle!(oracle_rgb32, ColorMode::Rgb, SampleType::F32, Features::ALL, TOL);
 oracle!(oracle_gray8, ColorMode::Grayscale, SampleType::U8, Features::ALL, TOL);
 oracle!(oracle_gray16, ColorMode::Grayscale, SampleType::U16, Features::ALL, TOL);
-// CMYK/Lab merged data is converted from the RGB composite (CMYK through the built-in
-// profile), so the stored merged image differs by a quantization round trip through the model.
-oracle!(oracle_cmyk8, ColorMode::Cmyk, SampleType::U8, Features::PIXELS, 3.0 / 255.0);
-// Lab: one 8-bit Lab quantization step is amplified up to ~15/255 near the sRGB gamut
-// edge (the sRGB toe has slope 12.92), so the tolerance is wider.
-oracle!(oracle_lab8, ColorMode::Lab, SampleType::U8, Features::PIXELS, 16.0 / 255.0);
 
 /// Builds a PSD with the *builder* (independent writer) whose merged image
 /// is produced by photocraft-compose, then checks import + flatten against it.

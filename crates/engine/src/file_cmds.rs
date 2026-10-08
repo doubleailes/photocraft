@@ -604,14 +604,8 @@ fn fit_image(s: &mut Session, p: &Value) -> Result<Value> {
 
 fn mode_name(m: ColorMode) -> &'static str {
     match m {
-        ColorMode::Bitmap => "bitmap",
         ColorMode::Grayscale => "grayscale",
-        ColorMode::Duotone => "duotone",
-        ColorMode::Indexed => "indexed",
         ColorMode::Rgb => "rgb",
-        ColorMode::Cmyk => "cmyk",
-        ColorMode::Lab => "lab",
-        ColorMode::Multichannel => "multichannel",
     }
 }
 
@@ -621,9 +615,7 @@ fn conditional_mode_change(s: &mut Session, p: &Value) -> Result<Value> {
     let to = match to.as_str() {
         "gray" | "grayscale" => "grayscale",
         "rgb" => "rgb",
-        "cmyk" => "cmyk",
-        "lab" => "lab",
-        other => return Err(EngineError::BadParams { cmd: cmd.into(), msg: format!("unsupported target mode \"{other}\" (rgb, grayscale, cmyk, lab)") }),
+        other => return Err(EngineError::BadParams { cmd: cmd.into(), msg: format!("unsupported target mode \"{other}\" (rgb, grayscale)") }),
     };
     let cur = mode_name(s.active().ok_or(EngineError::NoDocument)?.doc.mode);
     let from: Vec<String> = match p.get("from") {
@@ -1169,7 +1161,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Conditional Mode Change…",
             &["File", "Automate"],
             None,
-            r##"{"from":["rgb","grayscale","cmyk","lab","indexed","bitmap",…]|"any"="any","to":"rgb|grayscale|cmyk|lab"}"##,
+            r##"{"from":["rgb","grayscale"]|"any"="any","to":"rgb|grayscale"}"##,
             has_doc,
             conditional_mode_change
         ),

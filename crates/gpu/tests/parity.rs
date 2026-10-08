@@ -184,17 +184,10 @@ fn adjustments() -> Vec<Adjustment> {
         Adjustment::BrightnessContrast { brightness: 30.0, contrast: 40.0, legacy: false },
         Adjustment::BrightnessContrast { brightness: -20.0, contrast: -30.0, legacy: true },
         Adjustment::Exposure { exposure: 0.7, offset: 0.02, gamma: 1.2 },
-        Adjustment::Levels {
-            master: lc(0.1, 0.9, 1.3),
-            per_channel: [lc(0.0, 1.0, 0.8), LevelsChannel::default(), lc(0.2, 0.8, 1.0)],
-            space: Default::default(),
-            black: LevelsChannel::default(),
-        },
+        Adjustment::Levels { master: lc(0.1, 0.9, 1.3), per_channel: [lc(0.0, 1.0, 0.8), LevelsChannel::default(), lc(0.2, 0.8, 1.0)] },
         Adjustment::Curves {
             master: pts(&[(0.0, 0.1), (0.4, 0.6), (1.0, 0.9)]),
             per_channel: [pts(&[(0.0, 0.0), (0.5, 0.3), (1.0, 1.0)]), pts(&[(0.0, 0.0), (1.0, 1.0)]), pts(&[(0.0, 0.2), (1.0, 1.0)])],
-            space: Default::default(),
-            black: Vec::new(),
         },
         Adjustment::HueSaturation { hue: 40.0, saturation: 30.0, lightness: -10.0, colorize: false, ranges: HueRange::defaults() },
         Adjustment::HueSaturation { hue: 200.0, saturation: 50.0, lightness: 20.0, colorize: true, ranges: HueRange::defaults() },
@@ -248,7 +241,7 @@ fn adjustment_layers() {
         check(&mut g, &d, &format!("adjustment {depth:?}"));
         // Levels on whole levels of the document's depth (compose::adjust::levels_q).
         let lc = LevelsChannel { in_black: 0.17, in_white: 0.84, gamma: 1.78, out_black: 0.0, out_white: 1.0 };
-        let lv = Adjustment::Levels { master: lc, per_channel: Default::default(), space: Default::default(), black: LevelsChannel::default() };
+        let lv = Adjustment::Levels { master: lc, per_channel: Default::default() };
         d.layers.push(Layer::new("lv", LayerContent::Adjustment(lv)));
         check(&mut g, &d, &format!("levels {depth:?}"));
         // Photo Filter: SetLum on the encoded values in 16-bit, luminance-normalised in 32-bit.
@@ -422,13 +415,10 @@ fn formats_offsets_and_chunks() {
     d.layers.push(f);
     check(&mut g, &d, "16-bit / float / offsets");
 
-    // Grayscale and CMYK documents.
+    // Grayscale documents.
     let mut d = Document::new("g", Size::new(40, 30), ColorMode::Grayscale, SampleType::U8);
     d.layers.push(noise_layer("g", PixelFormat::GRAYA8, Rect::new(0, 0, 40, 30), 53, 0.5));
     check(&mut g, &d, "grayscale");
-    let mut d = Document::new("c", Size::new(40, 30), ColorMode::Cmyk, SampleType::U8);
-    d.layers.push(noise_layer("c", PixelFormat::CMYKA8, Rect::new(0, 0, 40, 30), 54, 1.0));
-    check(&mut g, &d, "cmyk");
 
     // Wider than one chunk.
     let w = photocraft_gpu::CHUNK + 100;
@@ -1295,36 +1285,6 @@ fn pattern_fill_layers() {
         d.layers.push(missing);
         fx_check(&mut g, &d, &format!("pattern fill link {link} scale {scale} angle {angle}"));
     }
-}
-
-#[test]
-fn lab_documents_mix_in_lab() {
-    let Some(mut g) = gpu() else { return };
-    for depth in [SampleType::U8, SampleType::U16] {
-        let mut d = Document::new("lab", Size::new(48, 40), ColorMode::Lab, depth);
-        let fmt = d.pixel_format();
-        d.layers.push(noise_layer("bg", fmt, Rect::new(0, 0, 48, 40), 81, 0.7));
-        let mut top = noise_layer("top", fmt, Rect::new(4, 4, 44, 36), 82, 0.0);
-        top.opacity = 0.8;
-        d.layers.push(top);
-        let mut m = noise_layer("mul", fmt, Rect::new(10, 2, 30, 38), 83, 0.3);
-        m.blend = BlendMode::Multiply;
-        d.layers.push(m);
-        let mut fx = blob("fx", fmt, 24.0, 20.0, 12.0, [0.7, 0.3, 0.2]);
-        fx.effects.items = vec![Effect::DropShadow(shadow(BlendMode::Normal, 0.6, 120.0, 4.0, 5.0, 0.0))];
-        d.layers.push(fx);
-        fx_check(&mut g, &d, &format!("lab {depth:?}"));
-    }
-    // The mix really is in Lab: a half-transparent edge differs from an sRGB mix.
-    let mut d = Document::new("lab", Size::new(2, 1), ColorMode::Lab, SampleType::U8);
-    let fmt = d.pixel_format();
-    let mut a = Layer::raster("a", fmt);
-    a.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 2, 1), &photocraft_raster::from_rgba(&fmt, [0.0, 0.0, 1.0, 1.0]));
-    let mut b = Layer::raster("b", fmt);
-    b.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 2, 1), &photocraft_raster::from_rgba(&fmt, [1.0, 1.0, 0.0, 0.5]));
-    d.layers = vec![a, b];
-    let p = photocraft_compose::flatten(&d).px[0];
-    assert!((p[0] - 0.5).abs() > 0.05 || (p[2] - 0.5).abs() > 0.05, "{p:?}");
 }
 
 #[test]

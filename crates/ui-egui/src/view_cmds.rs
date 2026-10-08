@@ -840,11 +840,9 @@ fn front(app: &mut PhotocraftApp, id: &str, params: &Value) -> Option<Result<Val
             let (w, h, _) = doc?;
             dialog(app, json!({"width": w, "height": h, "dontEnlarge": false}), json!({}))
         }
-        "file.automate.conditionalModeChange" => dialog(
-            app,
-            json!({"from": "any", "to": "rgb"}),
-            json!({"from": ["any", "rgb", "grayscale", "cmyk", "lab", "indexed", "bitmap", "duotone", "multichannel"], "to": ["rgb", "grayscale", "cmyk", "lab"]}),
-        ),
+        "file.automate.conditionalModeChange" => {
+            dialog(app, json!({"from": "any", "to": "rgb"}), json!({"from": ["any", "rgb", "grayscale"], "to": ["rgb", "grayscale"]}))
+        }
         "view.newGuideLayout" => {
             dialog(app, json!({"columns": 8, "gutter": 20, "rows": 0, "rowGutter": 0, "margin": 0, "centerColumns": false, "clearExisting": false}), json!({}))
         }

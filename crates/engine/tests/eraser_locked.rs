@@ -35,7 +35,7 @@ fn undo_depth(s: &Session) -> usize {
 
 #[test]
 fn eraser_on_background_paints_background_colour_at_every_depth_and_mode() {
-    for mode in ["rgb", "cmyk", "gray"] {
+    for mode in ["rgb", "gray"] {
         for depth in [8, 16, 32] {
             let mut s = doc(mode, depth);
             let before = layer_px(&s, 20, 25);
@@ -43,7 +43,7 @@ fn eraser_on_background_paints_background_colour_at_every_depth_and_mode() {
             erase(&mut s, json!({})).unwrap_or_else(|e| panic!("{mode}/{depth}: {e}"));
             let got = layer_px(&s, 20, 10);
             assert_eq!(got[3], 1.0, "{mode}/{depth}: the Background stays opaque");
-            // Exactly what the Brush paints with the background colour (CMYK and Gray documents
+            // Exactly what the Brush paints with the background colour (Gray documents
             // hold the colour converted into their mode).
             let mut brush = doc(mode, depth);
             brush.execute("paint.stroke", json!({"points": [[2, 10], [38, 10]], "size": 8, "hardness": 1.0, "color": "#ff0000"})).unwrap();
