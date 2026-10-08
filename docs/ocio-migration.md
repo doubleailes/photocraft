@@ -51,6 +51,10 @@ half-float documents follow the same path.
   sources keep their precision. The doors are: File › Open (sync, background job, automation), Revert, New, New from Clipboard and
   paste into an empty session, Load Files into Stack, batch processing, Photomerge results and tone-mapped Merge to HDR Pro results.
   Wide-gamut sources keep their colours (unclamped, out-of-range values in linear sRGB).
+  Shape layers re-render after the conversion, as any edit would. Text and smart-object pixels are
+  converted, since they may be Photoshop's own rendering. Smart-object contents and library patterns
+  are linearised when they enter a float RGB/gray document (render, stack modes, Edit Contents,
+  unpack, fills, overlays).
   Float files (EXR, HDR, 32-bit PSD) keep their values and depth. CMYK, Lab, Indexed, Bitmap,
   Duotone and Multichannel keep their depth and encoding until phase 8 removes them.
 * **New documents.** RGB/gray `file.new` makes 16-bit half float (or 32-bit float when asked), tagged linear.
@@ -68,6 +72,10 @@ half-float documents follow the same path.
   dialog, style presets), Color Range, Replace Color, render filters, lens edge colour and artboard
   backgrounds. Filter params record `colorsInDocument` so replays don't convert twice.
   The Eyedropper (`canvas::composite_color`) and the Layer Style dialog convert document values back.
+* **Display and output paths that bypass the view transform.** The channel view encodes a linear
+  document's channels for the screen. Print encodes to untagged sRGB/sGray. Camera Raw (engine and
+  dialog) develops float documents sRGB-encoded, as its pipeline expects, and decodes the result.
+  Mode conversions of float documents land in the target mode's linear profile.
 * **Clipboard.** `Clip.icc_profile` records the copied pixels' profile. Paste converts into the
   target document, and the OS clipboard gets working-space 8-bit RGBA.
 * **Not converted yet** (follow-ups): adjustment-layer colours (Photo Filter, Black & White tint),

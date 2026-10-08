@@ -3,7 +3,7 @@ use photocraft_color::SampleType;
 
 fn session_depth(depth: u32) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 40, "height": 20, "depth": depth})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20, "depth": depth}));
     s
 }
 
@@ -109,7 +109,7 @@ fn load_selection_operations_and_invert() {
 #[test]
 fn load_transparency_mask_and_composite() {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 20, "height": 10, "background": "transparent"})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 20, "height": 10, "background": "transparent"}));
     rect(&mut s, 0, 0, 5, 10, "replace");
     s.execute("edit.fill", json!({"color": "#ffffff"})).unwrap();
     s.execute("select.deselect", json!({})).unwrap();
@@ -191,7 +191,7 @@ fn shortcut_slots_target_channels() {
     assert_eq!(s.active().unwrap().channel_view.target, ChannelTarget::Composite);
     // Grayscale: ⌘3 is the first alpha channel.
     let mut g = Session::new();
-    g.execute("file.new", json!({"width": 4, "height": 4, "mode": "gray"})).unwrap();
+    crate::linear_doc::legacy_new(&mut g, &json!({"width": 4, "height": 4, "mode": "gray"}));
     g.execute("channel.new", json!({})).unwrap();
     g.execute("channel.target.slot3", json!({})).unwrap();
     assert_eq!(g.active().unwrap().channel_view.target, ChannelTarget::Alpha(0));
@@ -332,7 +332,7 @@ fn apply_image_hand_computed() {
     let mut s = session();
     // Target: 50% gray. Source: a second document, red #ff0000 / 50% gray.
     s.execute("edit.fill", json!({"color": "#808080"})).unwrap();
-    s.execute("file.new", json!({"width": 40, "height": 20})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20}));
     s.execute("edit.fill", json!({"color": "#ff4000"})).unwrap();
     s.set_active(0);
     let g = 128.0 / 255.0;
@@ -358,7 +358,7 @@ fn apply_image_hand_computed() {
     assert!((px(&s, 3, 3)[1] - want).abs() < 0.003);
     assert!((px(&s, 30, 3)[1] - g).abs() < 0.003, "outside the selection");
     // Size mismatch is refused.
-    s.execute("file.new", json!({"width": 5, "height": 5})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 5, "height": 5}));
     s.set_active(0);
     assert!(s.execute("image.applyImage", json!({"source": {"document": 2}})).is_err());
     assert!(s.execute("image.applyImage", json!({"blending": "hue"})).is_err());
@@ -462,7 +462,7 @@ fn duplicate_to_other_document() {
     let mut s = session();
     rect(&mut s, 0, 0, 5, 5, "replace");
     s.execute("select.saveSelection", json!({"name": "S"})).unwrap();
-    s.execute("file.new", json!({"width": 40, "height": 20, "depth": 16})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 20, "depth": 16}));
     s.set_active(0);
     s.execute("channel.duplicate", json!({"channel": "S", "document": 1, "name": "S2"})).unwrap();
     let d1 = &s.documents()[1].doc;

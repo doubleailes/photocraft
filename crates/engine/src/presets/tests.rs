@@ -5,7 +5,7 @@ use photocraft_doc::{Fill, LayerContent, LayerId};
 
 fn session(depth: u32) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "depth": depth}));
     s
 }
 
@@ -123,7 +123,9 @@ fn paint_gradient_honours_explicit_transparency_stops() {
     s.execute("file.new", json!({"width": 16, "height": 16, "background": "transparent"})).unwrap();
     s.execute("paint.gradient", json!({"from": [0, 0], "to": [0, 15], "colors": ["#07111d", "#07111d"], "transparency": transparency})).unwrap();
     let top = layer_px(&s, 8, 0);
-    assert!((top[2] - 29.0 / 255.0).abs() < 0.01, "{top:?}");
+    // A picked colour: stored in the (linear) document's values.
+    let lin = ((29.0f32 / 255.0 + 0.055) / 1.055).powf(2.4);
+    assert!((top[2] - lin).abs() < 1e-3, "{top:?}");
     for bad in [json!("65"), json!([[0]]), json!([[0, "a"]])] {
         assert!(s.execute("paint.gradient", json!({"from": [0, 0], "to": [0, 15], "colors": ["#000000"], "transparency": bad})).is_err());
     }

@@ -85,7 +85,8 @@ fn cmd_alt_e_stamps_down() {
     assert!(h.state().session.journal.iter().any(|(id, _)| id == "layer.stampDown"));
     let st = h.state().session.active().unwrap();
     let px = st.doc.layers[0].surface().unwrap().rgba(5, 5);
-    assert!((px[2] - 0.8).abs() < 0.01, "the copy was merged into the Background: {px:?}");
+    // 0.8 in linear light (the document is linear).
+    assert!((px[2] - ((0.8f32 + 0.055) / 1.055).powf(2.4)).abs() < 0.01, "the copy was merged into the Background: {px:?}");
     // On the Background there is nothing below: a status message, no crash.
     let bg = h.state().session.active().unwrap().doc.layers[0].id.0;
     h.state_mut().run("layer.select", json!({"layer": bg})).unwrap();

@@ -67,6 +67,16 @@ pub fn decode_source(file_name: &str, bytes: &[u8]) -> Result<Document> {
     photocraft_io::import(file_name, bytes).map(|r| r.document).map_err(|e| other(format!("can't read smart object contents \"{file_name}\": {e}")))
 }
 
+/// [`decode_source`] for a host of pixel format `host`: a float RGB or gray host is linear
+/// (`linear_doc`), so integer contents are linearised to match it.
+fn decode_for(file_name: &str, bytes: &[u8], host: PixelFormat) -> Result<Document> {
+    let mut doc = decode_source(file_name, bytes)?;
+    if host.sample.is_float() && crate::linear_doc::linear_profile(host.mode).is_some() {
+        crate::linear_doc::linearize(&mut doc)?;
+    }
+    Ok(doc)
+}
+
 fn base_name(path: &str) -> String {
     path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
@@ -162,7 +172,7 @@ pub fn source_image(file_name: &str, bytes: &[u8], fmt: PixelFormat) -> Result<S
     if let Some(img) = cache_get(&key) {
         return Ok(img);
     }
-    let doc = decode_source(file_name, bytes)?;
+    let doc = decode_for(file_name, bytes, fmt)?;
     let buf = photocraft_compose::flatten(&doc);
     let img = SourceImage { surface: Arc::new(buffer_to_surface(&buf, fmt)), bounds: doc.bounds() };
     cache_put(key, img.clone());
@@ -178,7 +188,7 @@ pub fn stack_image(file_name: &str, bytes: &[u8], fmt: PixelFormat, mode: photoc
     if let Some(img) = cache_get(&key) {
         return Ok(img);
     }
-    let doc = decode_source(file_name, bytes)?;
+    let doc = decode_for(file_name, bytes, fmt)?;
     let layers: &[Layer] = match doc.layers.as_slice() {
         [only] if only.is_group() => only.children().unwrap_or_default(),
         all => all,
@@ -647,7 +657,7 @@ fn edit_contents(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let parent = st.doc.id;
     let (name, bytes) = source_bytes(&st.doc.metadata, &smart(&st.doc, id)?.source).ok_or_else(|| other("the smart object's contents are unavailable"))?;
-    let mut child = decode_source(&name, &bytes)?;
+    let mut child = decode_for(&name, &bytes, st.doc.pixel_format())?;
     // Bundles keep their document id; each open copy needs its own.
     child.id = DocId::fresh();
     child.name = name;

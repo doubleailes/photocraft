@@ -115,14 +115,23 @@ fn has_pattern(s: &Session) -> std::result::Result<(), String> {
 pub fn resolve(s: &Session, key: &str) -> Option<Pattern> {
     if key.is_empty() {
         // The Patterns panel's selection, else the first library pattern.
-        return crate::presets::patterns::current(s).or(s.patterns.items.first()).cloned();
+        return crate::presets::patterns::current(s).or(s.patterns.items.first()).map(|p| for_active_doc(s, p));
     }
     if let Some(d) = s.active()
         && let Some(p) = photocraft_doc::pattern::find(&d.doc.patterns, key, key)
     {
         return Some(p.clone());
     }
-    photocraft_doc::pattern::find(&s.patterns.items, key, key).cloned()
+    photocraft_doc::pattern::find(&s.patterns.items, key, key).map(|p| for_active_doc(s, p))
+}
+
+/// A library pattern as the active document holds it: integer (encoded) patterns are made
+/// linear for a linear document (`linear_doc`).
+fn for_active_doc(s: &Session, p: &Pattern) -> Pattern {
+    match s.active() {
+        Some(d) => crate::linear_doc::pattern_for(p, &d.doc),
+        None => p.clone(),
+    }
 }
 
 pub(crate) fn resolve_param(s: &Session, cmd: &str, p: &Value) -> Result<Pattern> {

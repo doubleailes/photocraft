@@ -84,7 +84,9 @@ pub fn to_psd(p: &Pattern) -> PsdPattern {
         ColorMode::Grayscale | ColorMode::Rgb | ColorMode::Cmyk | ColorMode::Lab => f.mode,
         _ => ColorMode::Rgb,
     };
-    let fmt = PixelFormat::new(mode, f.sample, f.alpha);
+    // PSD has no half float: half-float patterns are stored as 32-bit float (lossless).
+    let sample = if f.sample == SampleType::F16 { SampleType::F32 } else { f.sample };
+    let fmt = PixelFormat::new(mode, sample, f.alpha);
     let surf = if fmt == f { p.surface.clone() } else { p.surface.convert(fmt) };
     let mut bytes = surf.to_interleaved(p.rect());
     let ch = fmt.channels();

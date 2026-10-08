@@ -3,7 +3,7 @@ use photocraft_doc::ColorMode;
 
 fn session(w: u32, h: u32, depth: u32) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": w, "height": h, "depth": depth, "background": "white"})).unwrap();
+    crate::linear_doc::legacy_new(&mut s, &json!({"width": w, "height": h, "depth": depth, "background": "white"}));
     s
 }
 

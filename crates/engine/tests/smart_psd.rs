@@ -15,7 +15,7 @@ const H: i32 = 64;
 
 fn session(depth: u64) -> Session {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": W, "height": H, "depth": depth})).unwrap();
+    photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": W, "height": H, "depth": depth}));
     s.execute("layer.new.layer", json!({})).unwrap();
     s.edit("paint", |doc, active| {
         let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();
@@ -275,7 +275,7 @@ fn camera_raw_psd_fixture() {
 fn smart_filters_survive_psd_in_every_colour_model() {
     for (mode, depth) in [("cmyk", 8), ("cmyk", 16), ("grayscale", 8), ("lab", 8), ("lab", 16)] {
         let mut s = Session::new();
-        s.execute("file.new", json!({"width": 32, "height": 24, "mode": mode, "depth": depth})).unwrap();
+        photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": 32, "height": 24, "mode": mode, "depth": depth}));
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("select.rect", json!({"x": 4, "y": 4, "width": 20, "height": 12})).unwrap();
         s.execute("edit.fill", json!({"color": "#c83c28"})).unwrap();
@@ -316,7 +316,7 @@ fn smart_filters_survive_psd_in_every_colour_model() {
 fn photoshop_samples() {
     for (mode, depth) in [("rgb", 8), ("rgb", 16), ("rgb", 32), ("cmyk", 8), ("lab", 16), ("grayscale", 8)] {
         let mut s = Session::new();
-        s.execute("file.new", json!({"width": W, "height": H, "mode": mode, "depth": depth})).unwrap();
+        photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": W, "height": H, "mode": mode, "depth": depth}));
         s.execute("layer.new.layer", json!({})).unwrap();
         s.execute("select.rect", json!({"x": 10, "y": 8, "width": 50, "height": 40})).unwrap();
         s.execute("edit.fill", json!({"color": "#c83c28"})).unwrap();
@@ -337,7 +337,7 @@ fn photoshop_samples() {
 fn perf_24mp_smart_object_export() {
     let (w, h) = (6000, 4000);
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": w, "height": h, "depth": 8})).unwrap();
+    photocraft_engine::linear_doc::legacy_new(&mut s, &json!({"width": w, "height": h, "depth": 8}));
     s.execute("layer.new.layer", json!({})).unwrap();
     s.edit("paint", |doc, active| {
         let surf = doc.layer_mut(active.unwrap()).unwrap().surface_mut().unwrap();

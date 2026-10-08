@@ -322,9 +322,24 @@ fn non_srgb_rgb_is_converted_to_srgb_for_formats_without_a_profile() {
             assert_eq!(back.icc_profile, None, "{what}");
             assert_colors(&column_pixels(&back, cols.len()), &want, 1.5 / 255.0, &what);
         }
-        // Formats that embed the profile keep it and the values.
+        // Formats that embed the profile keep it and the values; a linear float document
+        // (what Open and New make) is encoded to sRGB for an integer format instead.
         let r = export(&d, "a.png", &ExportOptions::default()).unwrap();
         let back = import("a.png", &r.bytes).unwrap().document;
+        if depth.is_float() && profile == Builtin::LinearSrgb {
+            assert_eq!(back.icc_profile.as_deref(), Some(&*Builtin::Srgb.profile().to_bytes()), "{profile:?} {depth:?}");
+            let srgb = Transform::new(profile.profile(), Builtin::Srgb.profile(), Intent::RelativeColorimetric, false).unwrap();
+            let encoded: Vec<Vec<f32>> = stored
+                .iter()
+                .map(|p| {
+                    let mut v = p.clone();
+                    srgb.apply(&mut v, 4);
+                    v.iter().map(|c| c.clamp(0.0, 1.0)).collect()
+                })
+                .collect();
+            assert_colors(&column_pixels(&back, cols.len()), &encoded, 0.6 / 255.0, &format!("{profile:?} {depth:?} png"));
+            continue;
+        }
         assert_eq!(back.icc_profile, d.icc_profile, "{profile:?} {depth:?}");
         assert_colors(&column_pixels(&back, cols.len()), &stored, 1e-4, &format!("{profile:?} {depth:?} png"));
     }

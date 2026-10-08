@@ -64,6 +64,8 @@ pub(crate) fn document_to_psd(doc: &Document, force_psb: bool) -> (PsdFile, Vec<
             warnings.push("32-bit Multichannel written as 16 bits/channel (Photoshop has no 32-bit Multichannel)".into());
             SampleType::U16
         }
+        // Ink coverage: half float fits 16-bit integers (Photoshop has no float Multichannel).
+        SampleType::F16 => SampleType::U16,
         s => s,
     };
     if !doc.layers.is_empty() {
