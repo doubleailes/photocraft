@@ -204,7 +204,7 @@ fn preview_equals_the_committed_edit() {
     let l = d.doc.layer(d.active_layer.unwrap()).unwrap().clone();
     let LayerContent::Fill(f) = &l.content else { panic!() };
     let p = json!({"from": [10, 12], "to": [30, 2]});
-    let preview = apply_set(&l, f, d.doc.bounds(), &p, [0.0; 4], [1.0; 4]).unwrap();
+    let preview = apply_set(&l, f, d.doc.bounds(), &p, [0.0; 4], [1.0; 4], &Default::default()).unwrap();
     s.execute(SET, p).unwrap();
     assert_eq!(active_fill(&s), preview);
 }

@@ -35,10 +35,44 @@ the later phases only convert at import and export and never branch on depth.
 * By crate: io 40, engine 28, ui-egui 26, algo 17, compose 9, format 6, gpu 5, and a few each elsewhere.
 * `codecs` already decodes and encodes `F16`, and `gpu` already depends on `half`.
 * Strategy:
-  1. Add `F16` to `photocraft_color::SampleType`, with tile storage, the compose read/write path and GPU upload. All behind tests at every depth.
-  2. Make import and new documents produce f16 linear only. Convert U8/U16 sources at the door.
+  1. **Done.** Add `F16` to `photocraft_color::SampleType`, with tile storage, the compose read/write path and GPU upload. All behind tests at every depth.
+  2. **Done.** Make import and new documents produce f16 linear only. Convert U8/U16 sources at the door (details below).
   3. Delete the U8/U16 document paths and their tests. Keep integer types only for codec I/O and masks.
   4. Benchmark at 24–36 MP before and after: tile memory, composite time, brush latency.
+
+### Half-float step 2 (`crates/engine/src/linear_doc.rs`)
+
+Until the OCIO phases land, "linear" means the ICC engine's linear profiles: linear sRGB
+(`Builtin::LinearSrgb`) and linear gray (`Builtin::LinearGray`, added for this). Float documents
+were already treated as linear everywhere (adjustment transfer, Photo Filter, 32-bit preview), so
+half-float documents follow the same path.
+
+* **Doors.** Integer RGB and grayscale documents are converted to linear half float, through f32 so 16-bit
+  sources keep their precision. The doors are: File › Open (sync, background job, automation), Revert, New, New from Clipboard and
+  paste into an empty session, Load Files into Stack, batch processing, Photomerge results and tone-mapped Merge to HDR Pro results.
+  Wide-gamut sources keep their colours (unclamped, out-of-range values in linear sRGB).
+  Float files (EXR, HDR, 32-bit PSD) keep their values and depth. CMYK, Lab, Indexed, Bitmap,
+  Duotone and Multichannel keep their depth and encoding until phase 8 removes them.
+* **New documents.** RGB/gray `file.new` makes 16-bit half float (or 32-bit float when asked), tagged linear.
+  The New dialog offers 16/32-bit float for RGB and gray. `image.mode.bits16f` converts an open
+  document; Image › Mode › 16 Bits/Channel shows checked for half float.
+* **Source depth.** `Document.source_depth` (saved in `.pcraft`) records the integer depth of
+  the file a document came from. Saving a linear document to a format without float (PNG, JPEG,
+  GIF, …), or to any non-HDR format when it came from an integer file, encodes it to sRGB/sGray at that depth (8-bit for
+  documents made here). Every 8-bit value survives open → save as PNG. EXR/HDR stay linear float. PSD
+  stays 32-bit float for now (phase 6 encodes it).
+* **Colours.** Tool colours are picked in the working RGB space. `Session::to_doc_color`,
+  `fg()`, `bg()` and `ColorConv` convert them where they enter pixels or document data. That covers brushes,
+  pencil, erasers, bucket, gradients (tool, fill layers, presets, explicit stops), Fill, Stroke,
+  Clear/Cut, canvas extension, rotate, shapes, path fill/stroke, text, Solid/Gradient fill layers, layer styles (commands,
+  dialog, style presets), Color Range, Replace Color, render filters, lens edge colour and artboard
+  backgrounds. Filter params record `colorsInDocument` so replays don't convert twice.
+  The Eyedropper (`canvas::composite_color`) and the Layer Style dialog convert document values back.
+* **Clipboard.** `Clip.icc_profile` records the copied pixels' profile. Paste converts into the
+  target document, and the OS clipboard gets working-space 8-bit RGBA.
+* **Not converted yet** (follow-ups): adjustment-layer colours (Photo Filter, Black & White tint),
+  character/paragraph style presets, the Info panel and colour samplers (they show document
+  values), and `gradientFill.get`, which reports stops as document values.
 
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**

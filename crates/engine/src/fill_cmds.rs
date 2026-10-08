@@ -97,11 +97,12 @@ pub fn fill(s: &mut Session, p: &Value) -> Result<Value> {
     let mut out = json!({ "contents": contents });
     let restore = contents == "history";
     let source = match contents {
-        "foreground" => Source::Color(s.tools.foreground),
-        "background" => Source::Color(s.tools.background),
-        "color" => Source::Color(color_param(p, "color", s.tools.foreground)),
+        // Picked colours (50% Gray included) in the document's values.
+        "foreground" => Source::Color(s.fg()),
+        "background" => Source::Color(s.bg()),
+        "color" => Source::Color(s.to_doc_color(color_param(p, "color", s.tools.foreground))),
         "black" => Source::Color([0.0, 0.0, 0.0, 1.0]),
-        "gray" => Source::Color([128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]),
+        "gray" => Source::Color(s.to_doc_color([128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0])),
         "white" => Source::Color([1.0; 4]),
         "pattern" => {
             let pat = crate::pattern_cmds::resolve_param(s, CMD, p)?;

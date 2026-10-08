@@ -116,7 +116,7 @@ fn map_pixels(s: &mut Session, label: &str, f: impl FnOnce(Rect, &mut [[f32; 4]]
 /// Edit › Stroke: a band along the selection edge (or the layer's opaque edge without a selection).
 fn stroke(s: &mut Session, p: &Value) -> Result<Value> {
     let width = p.get("width").and_then(Value::as_f64).unwrap_or(1.0).clamp(1.0, 250.0) as f32;
-    let mut color = color_param(p, "color", s.tools.foreground);
+    let mut color = s.to_doc_color(color_param(p, "color", s.tools.foreground));
     color[3] *= (p.get("opacity").and_then(Value::as_f64).unwrap_or(100.0) as f32 / 100.0).clamp(0.0, 1.0);
     let location = p.get("location").and_then(Value::as_str).unwrap_or("center").to_string();
     let id = layer_param(s, p)?;
@@ -236,7 +236,7 @@ pub(crate) fn clouds_value(x: f32, y: f32, base: f32, seed: u32) -> f32 {
 
 /// Filter › Render › Clouds / Difference Clouds, between the foreground and background colours.
 fn clouds(s: &mut Session, p: &Value, difference: bool) -> Result<Value> {
-    let (fg, bg) = (s.tools.foreground, s.tools.background);
+    let (fg, bg) = (s.fg(), s.bg());
     let seed = p.get("seed").and_then(Value::as_u64).unwrap_or(0) as u32;
     let size = s.active().map_or(256.0, |d| d.doc.size.width.max(d.doc.size.height) as f32);
     let base = (size / 4.0).clamp(16.0, 512.0);

@@ -396,11 +396,16 @@ fn uses_colours(id: &str) -> bool {
 /// recorded params (journal, smart filters) reproduce the result.
 pub(crate) fn prepare(s: &Session, id: &str, p: &Value) -> Value {
     let mut out = if p.is_object() { p.clone() } else { json!({}) };
-    if uses_colours(id)
-        && let Value::Object(m) = &mut out
-    {
-        m.entry("foreground").or_insert_with(|| json!(s.tools.foreground));
-        m.entry("background").or_insert_with(|| json!(s.tools.background));
+    // Picked colours become the document's pixel values once, marked so a replay of the
+    // recorded params doesn't convert them again.
+    if uses_colours(id) && out.get("colorsInDocument").is_none() {
+        let fg = s.to_doc_color(colour(&out, "foreground", s.tools.foreground));
+        let bg = s.to_doc_color(colour(&out, "background", s.tools.background));
+        if let Value::Object(m) = &mut out {
+            m.insert("foreground".into(), json!(fg));
+            m.insert("background".into(), json!(bg));
+            m.insert("colorsInDocument".into(), json!(true));
+        }
     }
     out
 }

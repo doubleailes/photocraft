@@ -42,6 +42,9 @@ pub struct DocM {
     pub mode: ColorMode,
     pub depth: SampleType,
     pub icc_profile: Option<Hash>,
+    /// Integer depth of the file the pixels came from (linear documents save back to it).
+    #[serde(default)]
+    pub source_depth: Option<SampleType>,
     /// Bottom-to-top.
     pub layers: Vec<LayerM>,
     pub channels: Vec<ChannelM>,

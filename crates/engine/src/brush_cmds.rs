@@ -180,8 +180,8 @@ pub fn resolve_brush(s: &Session, p: &Value, cmd: &str) -> Result<BrushSettings>
     if let Some(v) = num(p, "smoothing") {
         b.smoothing.amount = v.clamp(0.0, 1.0);
     }
-    b.color = color(p.get("color"), s.tools.foreground);
-    b.background = s.tools.background;
+    b.color = s.to_doc_color(color(p.get("color"), s.tools.foreground));
+    b.background = s.bg();
     b.erase = flag(p, "erase", false);
     b.seed = match p.get("seed").and_then(Value::as_u64) {
         Some(v) => v,
@@ -210,7 +210,7 @@ fn damage_json(s: &mut Session, dmg: Rect) -> Value {
 fn stroke_target(s: &Session, p: &Value, brush: BrushSettings) -> Result<(Option<photocraft_doc::LayerId>, BrushSettings, f32)> {
     let gray = is_mask_target(p) || crate::channel_cmds::is_channel_target(p);
     let id = if crate::channel_cmds::is_channel_target(p) { None } else { Some(layer_id(s, p)?) };
-    let brush = if gray && brush.erase { BrushSettings { erase: false, color: s.tools.background, ..brush } } else { brush };
+    let brush = if gray && brush.erase { BrushSettings { erase: false, color: s.bg(), ..brush } } else { brush };
     Ok((id, brush, num(p, "zoom").unwrap_or(1.0)))
 }
 
@@ -225,7 +225,7 @@ fn erase_locked(brush: &mut BrushSettings, lock: bool, bg: [f32; 4]) {
 
 /// Stroke with a resolved brush onto the target layer (pixels or mask).
 fn stroke_with(s: &mut Session, p: &Value, label: &str, brush: BrushSettings, pts: Vec<StrokePoint>, auto_erase: bool) -> Result<Value> {
-    let bg = s.tools.background;
+    let bg = s.bg();
     let fg = brush.color;
     let symmetry = s.active().and_then(|st| st.symmetry_path.clone());
     let (id, brush, zoom) = stroke_target(s, p, brush)?;
@@ -344,9 +344,9 @@ impl LiveStroke {
         let mut doc = (*s.active().ok_or(EngineError::NoDocument)?.doc).clone();
         let sel = doc.selection.clone();
         let (surf, lock) = crate::channel_cmds::target_surface(&mut doc, layer, p)?;
-        erase_locked(&mut brush, lock, s.tools.background);
+        erase_locked(&mut brush, lock, s.bg());
         if pencil && flag(p, "autoErase", false) {
-            apply_auto_erase(&mut brush, surf, pts.first(), fg, s.tools.background);
+            apply_auto_erase(&mut brush, surf, pts.first(), fg, s.bg());
         }
         let renderer = StrokeRenderer::new(&brush, Some(surf.format()), zoom);
         let mirror = s.active().and_then(|st| st.symmetry_path.clone()).map(|axis| (axis, StrokeRenderer::new(&brush, Some(surf.format()), zoom)));
@@ -436,7 +436,7 @@ fn mixer_brush(s: &mut Session, p: &Value) -> Result<Value> {
     let (clean, load_after) = (flag(p, "cleanAfterStroke", true), flag(p, "loadAfterStroke", true));
     let mut state = s.tools.mixer.clone();
     if load_after || state.reservoir.is_none() {
-        state.load(color(p.get("color"), s.tools.foreground));
+        state.load(s.to_doc_color(color(p.get("color"), s.tools.foreground)));
     }
     let id = if crate::channel_cmds::is_channel_target(p) { None } else { Some(layer_id(s, p)?) };
     let stroke = Stroke { brush, points: pts };
@@ -480,7 +480,7 @@ fn color_replacement(s: &mut Session, p: &Value) -> Result<Value> {
         tolerance: pct(p, "tolerance", 30.0),
         anti_alias: flag(p, "antiAlias", true),
         color: brush.color,
-        background: s.tools.background,
+        background: s.bg(),
     };
     let id = layer_id(s, p)?;
     let stroke = Stroke { brush, points: pts };

@@ -568,7 +568,8 @@ fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
             "bitmap" => Some(d.mode == ColorMode::Bitmap),
             "duotone" => Some(d.mode == ColorMode::Duotone),
             "bits8" => Some(d.depth == SampleType::U8),
-            "bits16" => Some(d.depth == SampleType::U16),
+            // Half-float documents show under 16 Bits/Channel.
+            "bits16" => Some(matches!(d.depth, SampleType::U16 | SampleType::F16)),
             "bits32" => Some(d.depth == SampleType::F32),
             _ => None,
         };

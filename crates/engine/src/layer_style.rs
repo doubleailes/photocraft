@@ -9,6 +9,7 @@ use photocraft_doc::{
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str};
+use crate::linear_doc::ColorConv;
 use crate::presets::{always, bad};
 use crate::{EngineError, Result, Session};
 
@@ -461,6 +462,21 @@ pub fn effect_from_params(kind: &str, p: &Value) -> Option<Effect> {
     Some(fx)
 }
 
+/// [`effect_from_params`] for a document: the default and given colours (picked ones) are
+/// converted into its pixel values by `to_doc`.
+pub fn effect_from_params_in(kind: &str, p: &Value, to_doc: &ColorConv) -> Option<Effect> {
+    let mut fx = fresh_effect(kind)?;
+    to_doc.effect(&mut fx);
+    overlay_effect(&mut fx, &params_in(p, to_doc));
+    Some(fx)
+}
+
+/// `p` with its colour keys (picked colours) as the document's values, so
+/// [`overlay_effect`] stores them as they are.
+pub fn params_in(p: &Value, to_doc: &ColorConv) -> Value {
+    crate::linear_doc::colors_in(p, &["color", "from", "to"], to_doc)
+}
+
 /// The effect's kind as the commands and dialog name it.
 pub fn kind_of(e: &Effect) -> &'static str {
     match e {
@@ -501,6 +517,7 @@ fn replace_effects(s: &mut Session, p: &Value) -> Result<Value> {
     }
     let mut list = Vec::with_capacity(entries.len());
     let mut pats = Vec::new();
+    let to_doc = s.to_doc();
     for e in entries {
         let kind = e.get("kind").and_then(Value::as_str).ok_or_else(|| bad(CMD, "each effect needs a `kind` string"))?;
         let params = match e.get("params") {
@@ -514,10 +531,10 @@ fn replace_effects(s: &mut Session, p: &Value) -> Result<Value> {
                 if kind_of(&fx) != kind {
                     return Err(bad(CMD, format!("effect snapshot is a {}, not `{kind}`", kind_of(&fx))));
                 }
-                overlay_effect(&mut fx, &params);
+                overlay_effect(&mut fx, &params_in(&params, &to_doc));
                 fx
             }
-            None => effect_from_params(kind, &params).ok_or_else(|| bad(CMD, format!("unknown effect {kind}")))?,
+            None => effect_from_params_in(kind, &params, &to_doc).ok_or_else(|| bad(CMD, format!("unknown effect {kind}")))?,
         };
         let (fx, pat) = crate::pattern_cmds::resolve_effect(s, fx)?;
         if let Some(pat) = pat {
@@ -540,7 +557,7 @@ fn replace_effects(s: &mut Session, p: &Value) -> Result<Value> {
 }
 
 fn set_effect(s: &mut Session, p: &Value, kind: &str) -> Result<Value> {
-    let fx = effect_from_params(kind, p).ok_or_else(|| EngineError::Other(format!("unknown effect {kind}")))?;
+    let fx = effect_from_params_in(kind, p, &s.to_doc()).ok_or_else(|| EngineError::Other(format!("unknown effect {kind}")))?;
     let (fx, pattern) = crate::pattern_cmds::resolve_effect(s, fx)?;
     let label = format!("Layer Style: {}", fx.label());
     let add = b(p, "add", false);

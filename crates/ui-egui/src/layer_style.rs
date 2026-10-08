@@ -421,6 +421,12 @@ fn remove_instance(f: &mut Map<String, Value>, id: &str) {
 /// names a kind to open: its first instance is selected (and enabled), or one
 /// is created. `light` is the document's global light angle.
 pub fn initial_fields(layer: &Layer, select: Option<&str>, light: f32) -> Map<String, Value> {
+    initial_fields_in(layer, select, light, &Default::default())
+}
+
+/// [`initial_fields`] showing the layer's colours as picked colours (`from_doc` converts a
+/// linear document's values); the apply converts them back.
+pub fn initial_fields_in(layer: &Layer, select: Option<&str>, light: f32, from_doc: &photocraft_engine::linear_doc::ColorConv) -> Map<String, Value> {
     let mut f = Map::new();
     f.insert("layer".into(), json!(layer.id.0));
     f.insert("globalLight".into(), json!(light));
@@ -431,11 +437,13 @@ pub fn initial_fields(layer: &Layer, select: Option<&str>, light: f32) -> Map<St
     );
     let mut effects = Vec::new();
     for (i, e) in layer.effects.items.iter().enumerate() {
+        let mut shown = e.clone();
+        from_doc.effect(&mut shown);
         effects.push(json!({
             "id": format!("fx{}", i + 1),
             "kind": kind_of(e),
             "on": e.enabled(),
-            "params": values_of(e, light),
+            "params": values_of(&shown, light),
             "fx": serde_json::to_value(e).unwrap_or(Value::Null),
         }));
     }
@@ -471,7 +479,7 @@ pub fn open(app: &mut PhotocraftApp, select: Option<&str>) -> Option<u64> {
     let st = app.session.active()?;
     let layer = st.doc.layer(st.active_layer?)?.clone();
     let light = st.doc.global_light.angle;
-    let mut f = initial_fields(&layer, select, light);
+    let mut f = initial_fields_in(&layer, select, light, &app.session.from_doc());
     f.insert("patternList".into(), pattern_list(app));
     Some(app.ui.open_dialog(crate::state::DialogKind::LayerStyle, f))
 }
@@ -606,13 +614,17 @@ fn apply_style_preset(app: &PhotocraftApp, f: &mut Map<String, Value>, name: &st
     let Ok(style) = photocraft_engine::presets::styles::find_style(&app.session, &json!({"preset": name}), "apply_style_preset") else { return };
     let light = f.get("globalLight").and_then(Value::as_f64).unwrap_or(120.0) as f32;
     let mut effects = Vec::new();
+    let to_doc = app.session.to_doc();
     for (i, e) in style.effects.iter().enumerate() {
+        // The preset's picked colours: shown as they are, the snapshot in the document's values.
+        let mut snap = e.clone();
+        to_doc.effect(&mut snap);
         effects.push(json!({
             "id": format!("fx{}", i + 1),
             "kind": kind_of(e),
             "on": e.enabled(),
             "params": values_of(e, light),
-            "fx": serde_json::to_value(e).unwrap_or(Value::Null),
+            "fx": serde_json::to_value(&snap).unwrap_or(Value::Null),
         }));
     }
     f.insert("effects".into(), Value::Array(effects));

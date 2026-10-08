@@ -86,6 +86,18 @@ impl GradientPreset {
     }
 
     /// RGBA stops for painting: colour and transparency stops merged (see [`apply_opacity`]).
+    /// The preset with its explicit (picked) stop colours in a document's pixel values.
+    pub fn in_doc(&self, to_doc: &crate::linear_doc::ColorConv) -> GradientPreset {
+        let mut g = self.clone();
+        for (_, c) in &mut g.stops {
+            if let StopColor::Rgb(v) = c {
+                let [r, gr, b, _] = to_doc.apply([v[0], v[1], v[2], 1.0]);
+                *v = [r, gr, b];
+            }
+        }
+        g
+    }
+
     pub fn resolve(&self, fg: [f32; 4], bg: [f32; 4]) -> Vec<(f32, [f32; 4])> {
         let rgb = |c: StopColor| match c {
             StopColor::Foreground => [fg[0], fg[1], fg[2], 1.0],
@@ -378,7 +390,7 @@ pub fn tool_stops(s: &Session, p: &Value) -> Result<Option<Stops>> {
     } else {
         s.presets.gradient.clone().with_transparency(p, CMD)?
     };
-    Ok(Some(g.resolve(s.tools.foreground, s.tools.background)))
+    Ok(Some(g.in_doc(&s.to_doc()).resolve(s.fg(), s.bg())))
 }
 
 /// The preset named by `"preset"` (else the current gradient), or explicit `"stops"`.
@@ -415,7 +427,7 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
     if p.get("applyToLayer").and_then(Value::as_bool).unwrap_or(true)
         && let Some(id) = active_gradient_fill(s)
     {
-        let (stops_new, opacity_new) = g.fill_stops(s.tools.foreground, s.tools.background);
+        let (stops_new, opacity_new) = g.in_doc(&s.to_doc()).fill_stops(s.fg(), s.bg());
         s.edit("Change Gradient Fill", |doc, _| {
             if let Some(l) = doc.layer_mut(id)
                 && let LayerContent::Fill(Fill::Gradient { stops, opacity_stops, midpoints, .. }) = &mut l.content
@@ -434,7 +446,7 @@ fn select(s: &mut Session, p: &Value) -> Result<Value> {
 fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     const CMD: &str = "gradient.presets.apply";
     let g = preset_param(s, p, CMD)?;
-    let stops = g.doc_stops(s.tools.foreground, s.tools.background);
+    let stops = g.in_doc(&s.to_doc()).doc_stops(s.fg(), s.bg());
     let angle = p.get("angle").and_then(Value::as_f64).unwrap_or(90.0) as f32;
     let scale = (p.get("scale").and_then(Value::as_f64).unwrap_or(100.0) as f32 / 100.0).clamp(0.1, 1.5);
     let style = crate::layer_style::gradient_style(p.get("style").and_then(Value::as_str).unwrap_or("linear"));

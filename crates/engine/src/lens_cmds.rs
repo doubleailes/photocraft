@@ -303,6 +303,7 @@ fn lens_correction(s: &mut Session, p: &Value) -> Result<Value> {
     let st = s.active().ok_or(EngineError::NoDocument)?;
     let frame = st.doc.bounds();
     let info = camera_info(&st.doc);
+    let p = &crate::linear_doc::colors_in(p, &["edgeColor"], &s.to_doc());
     let lc = lens_params(LENS, p, frame, info.as_ref())?;
     let stored = resolved_lens_params(p, &lc);
     let t0 = Stopwatch::start();

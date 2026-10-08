@@ -67,7 +67,7 @@ fn rotate_arbitrary(s: &mut Session, p: &Value) -> Result<Value> {
     if deg.rem_euclid(360.0).abs() < 1e-9 {
         return Ok(json!({"width": s.active().map(|d| d.doc.size.width), "height": s.active().map(|d| d.doc.size.height)}));
     }
-    let bg = s.tools.background;
+    let bg = s.bg();
     let size = s.edit("Rotate Canvas", |doc, _| {
         let old = doc.size;
         let new = rotated_size(old, deg);

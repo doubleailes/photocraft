@@ -559,14 +559,22 @@ fn shape_create(s: &mut Session, p: &Value) -> Result<Value> {
     };
     let fg = s.tools.foreground;
     let fgc = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
-    let fill = match p.get("fill") {
+    let to_doc = s.to_doc();
+    let mut fill = match p.get("fill") {
         Some(v) => parse_fill(v).map_err(|e| bad(CMD, e))?,
         None => Some(Fill::Solid(fgc)),
     };
-    let stroke = match p.get("stroke") {
+    let mut stroke = match p.get("stroke") {
         Some(v) => parse_stroke(v, None, fgc).map_err(|e| bad(CMD, e))?,
         None => None,
     };
+    // Picked colours become the document's values.
+    if let Some(f) = &mut fill {
+        to_doc.fill(f);
+    }
+    if let Some(st) = &mut stroke {
+        to_doc.fill(&mut st.paint);
+    }
     // Add to an existing shape layer with a path operation (Shape tool in combine/subtract… mode).
     if let Some(target) = p.get("addTo").and_then(Value::as_u64) {
         let op = p.get("op").and_then(Value::as_str).map_or(Some(PathOp::Combine), op_from).ok_or_else(|| bad(CMD, "unknown `op`"))?;
@@ -599,6 +607,7 @@ fn shape_edit(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_id(s, p)?;
     let fg = s.tools.foreground;
     let fgc = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
+    let to_doc = s.to_doc();
     let name = p.get("name").and_then(Value::as_str).map(str::to_string);
     with_shape(s, id, "Edit Shape", |sh, layer| {
         if let Some(v) = p.get("path") {
@@ -637,9 +646,18 @@ fn shape_edit(s: &mut Session, p: &Value) -> Result<Value> {
         }
         if let Some(v) = p.get("fill") {
             sh.fill = parse_fill(v).map_err(|e| bad(CMD, e))?;
+            if let Some(f) = &mut sh.fill {
+                to_doc.fill(f);
+            }
         }
         if let Some(v) = p.get("stroke") {
-            sh.stroke = parse_stroke(v, sh.stroke.clone(), fgc).map_err(|e| bad(CMD, e))?;
+            // Only colours given here are picked ones; a kept stroke paint is already the document's.
+            let given = v.get("color").or_else(|| v.get("fill")).is_some();
+            let old = sh.stroke.clone();
+            sh.stroke = parse_stroke(v, old.clone(), to_doc.color(fgc)).map_err(|e| bad(CMD, e))?;
+            if given && let Some(st) = &mut sh.stroke {
+                to_doc.fill(&mut st.paint);
+            }
         }
         if let Some(n) = name {
             layer.name = n;
@@ -941,7 +959,7 @@ fn select_to_work_path(s: &mut Session, p: &Value) -> Result<Value> {
 fn path_fill(s: &mut Session, p: &Value) -> Result<Value> {
     let path = resolve_path(s, p.get("name").and_then(Value::as_str))?;
     let fg = s.tools.foreground;
-    let c = p.get("color").and_then(color).unwrap_or(Color::rgba(fg[0], fg[1], fg[2], fg[3]));
+    let c = s.to_doc_rgb(p.get("color").and_then(color).unwrap_or(Color::rgba(fg[0], fg[1], fg[2], fg[3])));
     let rgb = c.to_rgb();
     let src = [rgb[0], rgb[1], rgb[2], c.alpha];
     let opacity = (f64p(p, "opacity").unwrap_or(100.0) / 100.0).clamp(0.0, 1.0) as f32;
@@ -1002,10 +1020,10 @@ fn path_stroke(s: &mut Session, p: &Value) -> Result<Value> {
         size: f64p(p, "size").map_or(base.size, |v| v as f32),
         hardness: f64p(p, "hardness").map_or(base.hardness, |v| v as f32),
         opacity: f64p(p, "opacity").map_or(base.opacity, |v| (v / 100.0) as f32),
-        color: p.get("color").and_then(color).map_or(fg, |c| {
+        color: s.to_doc_color(p.get("color").and_then(color).map_or(fg, |c| {
             let v = c.to_rgb();
             [v[0], v[1], v[2], c.alpha]
-        }),
+        })),
         erase: tool == "eraser",
         ..base
     };
@@ -1019,7 +1037,7 @@ fn path_stroke(s: &mut Session, p: &Value) -> Result<Value> {
     crate::brush_cmds::validate_brush_size(&brush, "path.stroke")?;
     let lines = vector::flatten_path(&path, 0.1);
     let id = layer_id(s, p)?;
-    let bg = s.tools.background;
+    let bg = s.bg();
     let dmg = s.edit("Stroke Path", |doc, _| {
         let sel = doc.selection.clone();
         let lock = doc.effective_locks(id).transparency;

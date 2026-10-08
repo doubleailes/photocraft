@@ -68,7 +68,11 @@ fn load_sources(s: &Session, p: &Value, cmd: &str) -> Result<Loaded> {
     let mut docs: Vec<(String, Document)> = Vec::new();
     if p.get("useOpenDocuments").and_then(Value::as_bool).unwrap_or(false) {
         for d in s.documents() {
-            docs.push((d.doc.name.clone(), (*d.doc).clone()));
+            // The merges work on display-encoded values, as the files on disk hold them.
+            let mut doc = (*d.doc).clone();
+            let working = s.color.working(doc.mode);
+            crate::linear_doc::to_encoded(&mut doc, &working)?;
+            docs.push((d.doc.name.clone(), doc));
         }
     }
     let paths: Vec<String> = match p.get("paths").or_else(|| p.get("input")) {
@@ -506,7 +510,8 @@ fn photomerge(s: &mut Session, p: &Value) -> Result<Value> {
                 }),
             ))
         },
-        |s, (doc, mut info): (Document, Value)| {
+        |s, (mut doc, mut info): (Document, Value)| {
+            crate::linear_doc::to_linear(&mut doc)?;
             info["document"] = json!(s.add_document(doc, None));
             Ok(info)
         },
@@ -713,6 +718,8 @@ fn merge_to_hdr(s: &mut Session, p: &Value) -> Result<Value> {
     let mut surf = Surface::new(fmt);
     surf.write_region(area, &data);
     doc.layers.push(Layer::new("Background", LayerContent::Raster(surf)));
+    // Tone-mapped 8/16-bit results open linear like any other document.
+    crate::linear_doc::linearize(&mut doc)?;
     let idx = s.add_document(doc, None);
     let ev0 = exposures[order[0]];
     Ok(json!({
@@ -771,6 +778,7 @@ fn crop_and_straighten(s: &mut Session, _p: &Value) -> Result<Value> {
         px.write_region(keep, &data);
         let mut nd = Document::new(format!("{} copy {}", doc.name, k + 1), Size::new(pw, ph), doc.mode, doc.depth);
         nd.icc_profile = doc.icc_profile.clone();
+        nd.source_depth = doc.source_depth;
         nd.resolution_dpi = doc.resolution_dpi;
         let mut bg = Layer::new("Background", LayerContent::Raster(px));
         bg.locks.transparency = true;

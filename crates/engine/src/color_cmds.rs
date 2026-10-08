@@ -936,10 +936,12 @@ fn profile_mismatch(s: &mut Session, p: &Value) -> Result<Value> {
 
 impl Session {
     /// Add a document read from a file, applying the Color Settings policy first (preserve,
-    /// convert to the working space, or discard the embedded profile). Returns the document
-    /// index and a report (`action`, `mismatch`, `ask`) the UI can turn into a prompt.
+    /// convert to the working space, or discard the embedded profile), then converting it to
+    /// linear half float ([`crate::linear_doc`]). Returns the document index and a report
+    /// (`action`, `mismatch`, `ask`, `linearized`) the UI can turn into a prompt.
     pub fn open_document(&mut self, mut doc: Document, path: Option<String>) -> (usize, Value) {
         let report = self.color.open_policy(&mut doc);
+        let report = merge(report, crate::linear_doc::linearize_import(&mut doc));
         (self.add_document(doc, path), report)
     }
 }

@@ -791,7 +791,8 @@ impl PhotocraftApp {
     /// events and no Color Settings policy (which may read user-configured profile paths).
     fn import_automation_document(&mut self, name: &str, bytes: &[u8]) -> Result<Vec<String>, String> {
         let import = self.services.import.as_ref().ok_or("no importer configured")?;
-        let (doc, warnings) = import(name, bytes)?;
+        let (mut doc, warnings) = import(name, bytes)?;
+        photocraft_engine::linear_doc::linearize_import(&mut doc);
         // The caller records the path it read from.
         self.session.add_document(doc, None);
         self.sync_views();
@@ -1404,13 +1405,9 @@ fn clip_signature(w: u32, h: u32, px: &[u8]) -> u64 {
 impl PhotocraftApp {
     /// Mirror the session clipboard onto the OS clipboard (RGBA8).
     fn export_os_clipboard(&mut self) {
-        let (Some(set), Some(clip)) = (self.services.clipboard_set_image.as_mut(), self.session.clipboard.as_ref()) else { return };
-        let b = clip.bounds;
-        if b.is_empty() {
-            return;
-        }
-        let mut px = vec![[0u8; 4]; b.width() as usize * b.height() as usize];
-        clip.surface.read_rgba8_into(b, &mut px);
+        let Some(set) = self.services.clipboard_set_image.as_mut() else { return };
+        // Linear documents copy linear pixels; other apps get them in the working space.
+        let Some((b, px)) = self.session.clipboard_rgba8() else { return };
         let bytes: Vec<u8> = px.into_iter().flatten().collect();
         if set(b.width(), b.height(), &bytes).is_ok() {
             self.os_clip_sig = Some(clip_signature(b.width(), b.height(), &bytes));
@@ -1433,7 +1430,7 @@ impl PhotocraftApp {
         let r = photocraft_geom::Rect::new(0, 0, w as i32, h as i32);
         let mut surface = photocraft_raster::Surface::from_interleaved(photocraft_color::PixelFormat::RGBA8, r, &bytes);
         surface.prune();
-        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r });
+        self.session.clipboard = Some(photocraft_engine::edit_cmds::Clip { surface, bounds: r, icc_profile: None });
         self.os_clip_sig = Some(sig);
         self.clip_external = true;
         true

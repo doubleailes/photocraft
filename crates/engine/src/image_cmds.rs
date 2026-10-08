@@ -201,6 +201,10 @@ fn anchor_factors(a: &str) -> (f64, f64) {
 }
 
 fn extension_color(s: &Session, p: &Value) -> [f32; 4] {
+    s.to_doc_color(picked_extension_color(s, p))
+}
+
+fn picked_extension_color(s: &Session, p: &Value) -> [f32; 4] {
     match p.get("extensionColor").and_then(Value::as_str).unwrap_or("background") {
         "foreground" => s.tools.foreground,
         "white" => [1.0; 4],
@@ -337,12 +341,23 @@ fn convert_depth(s: &mut Session, depth: SampleType) -> Result<Value> {
         return Ok(Value::Null);
     }
     s.edit("Bit Depth", |doc, _| {
-        convert_layers_depth(&mut doc.layers, depth);
-        for ch in doc.channels.iter_mut().chain(doc.quick_mask.as_mut()) {
-            let f = ch.surface.format().with_sample(depth);
-            ch.surface = ch.surface.convert(f);
+        crate::linear_doc::set_document_depth(doc, depth);
+        Ok(())
+    })?;
+    Ok(Value::Null)
+}
+
+/// 16-bit half float: RGB and gray documents become linear ([`crate::linear_doc`]); other
+/// modes change depth only.
+fn convert_to_half(s: &mut Session) -> Result<Value> {
+    let d = s.active().ok_or(EngineError::NoDocument)?;
+    if d.doc.depth == SampleType::F16 {
+        return Ok(Value::Null);
+    }
+    s.edit("Bit Depth", |doc, _| {
+        if !crate::linear_doc::to_linear(doc)? {
+            crate::linear_doc::set_document_depth(doc, SampleType::F16);
         }
-        doc.depth = depth;
         Ok(())
     })?;
     Ok(Value::Null)
@@ -438,6 +453,16 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("image.mode.bits8", "8 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U8)),
         spec!("image.mode.bits16", "16 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U16)),
         spec!("image.mode.bits32", "32 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::F32)),
+        CommandSpec {
+            id: "image.mode.bits16f",
+            label: "16 Bits/Channel (half float)",
+            menu: &[],
+            shortcut: None,
+            params: "{} — RGB and gray documents become linear half float",
+            enabled: has_doc,
+            run: |s, _| convert_to_half(s),
+            journal: true,
+        },
         spec!("image.duplicate", "Duplicate…", ["Image"], r##"{"name":str,"mergedOnly":bool=false}"##, has_doc, duplicate),
     ]
 }

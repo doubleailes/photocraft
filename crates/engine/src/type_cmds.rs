@@ -528,9 +528,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 // Type › Save Default Type Styles sets the starting styles; the colour is always
                 // the foreground colour, as in Photoshop.
                 let (mut style, mut para) = s.type_defaults.clone().unwrap_or_else(|| (CharStyle { font_family: photocraft_text::fonts::DEFAULT_FAMILY.into(), ..Default::default() }, ParagraphStyle::default()));
-                let fg = s.tools.foreground;
+                let fg = s.fg();
                 style.color = Color::rgba(fg[0], fg[1], fg[2], fg[3]);
-                apply_char_props(&mut style, p);
+                apply_char_props(&mut style, &crate::linear_doc::colors_in(p, &["color"], &s.to_doc()));
                 apply_para_props(&mut para, p);
                 let (shape, transform) = match p.get("box").and_then(Value::as_array) {
                     Some(b) if b.len() == 4 => {
@@ -602,6 +602,7 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
                 };
                 let label = if kern_pair.is_some() { "Kerning" } else { "Edit Type" };
+                let p = &crate::linear_doc::colors_in(p, &["color"], &s.to_doc());
                 with_text_layer(s, p, label, |t, doc, rename| {
                     if let Some((at, by)) = kern_pair {
                         // Photoshop's Alt+←/→: the pair before the caret becomes manually kerned,
@@ -698,6 +699,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 let id = layer_id(s, p)?;
                 check_kerning(p).map_err(|m| bad("type.setStyle", m))?;
                 check_size_tracking(p).map_err(|m| bad("type.setStyle", m))?;
+                let p = &crate::linear_doc::colors_in(p, &["color"], &s.to_doc());
                 with_text_layer(s, p, "Set Type Style", |t, _, _| {
                     let (a, b) = range_param(&t.text, p);
                     let mut probe = CharStyle::default();
