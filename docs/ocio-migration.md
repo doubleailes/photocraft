@@ -26,19 +26,27 @@ Photoshop parity on purpose: CMYK, Lab, ICC proofing and the profile menus go aw
 
 ## Phases
 
-Each phase leaves the tree green.
+Each phase leaves the tree green. Half floats go first: once every document is linear f16,
+the later phases only convert at import and export and never branch on depth.
 
-1. **`crates/ocio` wrapper (L0, new).**
+### Half-float scope (measured 2026-10-08)
+
+* There are about 750 `SampleType::` references outside `codecs`: 386 `U8`, 166 `U16`, 199 `F32`. About 360 of them are in test files.
+* By crate: io 40, engine 28, ui-egui 26, algo 17, compose 9, format 6, gpu 5, and a few each elsewhere.
+* `codecs` already decodes and encodes `F16`, and `gpu` already depends on `half`.
+* Strategy:
+  1. Add `F16` to `photocraft_color::SampleType`, with tile storage, the compose read/write path and GPU upload. All behind tests at every depth.
+  2. Make import and new documents produce f16 linear only. Convert U8/U16 sources at the door.
+  3. Delete the U8/U16 document paths and their tests. Keep integer types only for codec I/O and masks.
+  4. Benchmark at 24–36 MP before and after: tile memory, composite time, brush latency.
+
+1. **Half-float documents** (see the scope above).
+2. **`crates/ocio` wrapper (L0, new).**
    * Owns config loading in this order: Color Settings path, then `$OCIO`, then `ocio://cg-config-latest`.
    * A processor cache that replaces `photocraft_cms::transform::cached`.
    * Role helpers (`scene_linear`, `color_picking`, `texture_paint`, `data`).
    * A panic guard, and a `bake_display_lut(display, view, look, size)` with a shaper.
    * Register it in `xtask/src/layers.rs`.
-2. **Half-float documents.**
-   * Add `F16` to `photocraft_color::SampleType` (`codecs` already has it), through raster tiles, compose and gpu (the gpu crate already depends on `half`).
-   * Import converts U8/U16 to f16 linear.
-   * Remove the `image.mode.bits8` and `bits16` commands, or make them convert to f16 with a notice.
-   * Benchmark tile memory and composite time at 24–36 MP. f16 halves the bandwidth of f32.
 3. **Document model.**
    * `Document.icc_profile` becomes `color_space: String`. Pixels are always `scene_linear`, so this records the *source/intent* space for round-trip export. Add `ocio_config: String` (URI or path, informational).
    * `.pcraft`: new fields get `#[serde(default)]`; old files with ICC bytes are linearised on load.
