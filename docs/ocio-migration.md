@@ -124,6 +124,34 @@ files are ignored), CMYK/Lab file export and the `channel.merge` CMYK/Lab target
   uses for files as read (PSD oracle composites) before they reach a session.
 * Parity: 8 Bits/Channel is a Photoshop menu item this fork drops (floor 619 → 618).
 
+### Half-float step 4: before and after (measured 2026-10-08)
+
+Benchmark: `crates/ui-egui/examples/large_image_bench.rs`, release, `--cpu` (no GPU on the
+measuring machine: 4 cores, 15 GB RAM, Linux). Before = `24c04a5` (last commit before any half-float
+code), after = `138a80a`. Synthetic 8-bit RGB photo, 24 MP (6000×4000) and 36 MP (7360×4912), one
+operation per process. Times are the bench's own single-run figures, so treat differences under
+about 10% as noise. Peak RSS is the kernel's high-water mark (`VmHWM`) for that process.
+
+| Scenario | 24 MP before | 24 MP after | 36 MP before | 36 MP after |
+|---|---|---|---|---|
+| Open (decode + document) | 0.52 s | **5.2–5.5 s** | 0.73 s | **8.1–8.4 s** |
+| First refresh (CPU) | 234–251 ms | 233–266 ms | 313–335 ms | 356–411 ms |
+| Full refresh (3 runs) | 210–255 ms | 228–259 ms | 317–345 ms | 388–427 ms |
+| Gaussian Blur r 10 | 458 ms | 672 ms | 688 ms | 1126 ms |
+| Brush, 40 dabs (size 120) | 12–13 ms | 15–19 ms | 12–16 ms | 15–20 ms |
+| Peak RSS, open / refresh | 482–492 MB | **1267 MB** | 721–729 MB | **1902 MB** |
+| Peak RSS, filter | 707 MB | 1267 MB | 971 MB | 1902 MB |
+
+* **Open is about 10× slower.** The integer→linear conversion (`linear_doc::to_linear`) runs a
+  full-surface f32 colour transform on the open thread, and clones the document twice
+  (`work`, `snapshot`). Not profiled yet; suspects are the transform and those clones.
+* **Memory is about 2.6× higher.** Half float is 2× the bytes of RGBA8. The rest is probably the
+  transient clones during open, and it stays high afterwards. Not profiled yet.
+* **Interactive paths hold up:** refresh is within about 10–20%, and a brush dab stays in the
+  tens of ms at 36 MP. Filters are the slowest hit (+47% at 24 MP, +64% at 36 MP).
+* Open follow-up: make `to_linear` tile-parallel, skip the document clones, and convert in the
+  storage precision that is needed. Re-run this table after.
+
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**
    * Owns config loading in this order: Color Settings path, then `$OCIO`, then `ocio://cg-config-latest`.
