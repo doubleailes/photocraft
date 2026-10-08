@@ -5,7 +5,7 @@ use photocraft_doc::{Fill, LayerContent, LayerId};
 
 fn session(depth: u32) -> Session {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "depth": depth}));
+    s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth})).unwrap();
     s
 }
 
@@ -71,8 +71,9 @@ fn gradient_tool_uses_selected_preset_at_every_depth() {
         s.execute("gradient.presets.select", json!({"preset": "Red 01"})).unwrap();
         s.execute("paint.gradient", json!({"from": [0, 0], "to": [63, 0]})).unwrap();
         let left = layer_px(&s, 0, 10);
-        // Red 01 starts at #7f0000.
-        assert!((left[0] - 127.0 / 255.0).abs() < 0.02 && left[1] < 0.01, "depth {depth}: {left:?}");
+        // Red 01 starts at #7f0000 (linear in the document).
+        let want = photocraft_color::convert::srgb_to_linear(127.0 / 255.0);
+        assert!((left[0] - want).abs() < 0.02 && left[1] < 0.01, "depth {depth}: {left:?}");
         // Explicit stops and a named preset override the selection.
         s.execute("paint.gradient", json!({"from": [0, 0], "to": [63, 0], "stops": [[0, "#00ff00"], [1, "#0000ff"]]})).unwrap();
         assert!(layer_px(&s, 0, 10)[1] > 0.98);
@@ -142,13 +143,15 @@ fn gradient_apply_creates_fill_layer_and_select_recolours_it() {
     };
     let (st, angle) = stops(&s);
     assert_eq!(angle, 0.0);
-    assert!((st[0].1.c[2] - 0x91 as f32 / 255.0).abs() < 1e-3);
+    // Stops hold document (linear) values.
+    let blue = photocraft_color::convert::srgb_to_linear(0x91 as f32 / 255.0);
+    assert!((st[0].1.c[2] - blue).abs() < 1e-3, "{:?}", st[0]);
     // Clicking another preset with the fill layer selected changes it (one undo step).
     let r = s.execute("gradient.presets.select", json!({"preset": "Green 01"})).unwrap();
     assert_eq!(r["layer"], json!(id.0));
-    assert!(stops(&s).0[0].1.c[1] > 0.25);
+    assert!(stops(&s).0[0].1.c[1] > 0.05);
     s.execute("edit.undo", json!({})).unwrap();
-    assert!((stops(&s).0[0].1.c[2] - 0x91 as f32 / 255.0).abs() < 1e-3);
+    assert!((stops(&s).0[0].1.c[2] - blue).abs() < 1e-3);
 }
 
 #[test]

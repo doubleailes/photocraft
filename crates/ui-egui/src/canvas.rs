@@ -2890,7 +2890,7 @@ mod tests {
         use photocraft_engine::display_color::Display;
         let mut app = PhotocraftApp::new(photocraft_engine::Session::new(), Default::default());
         // An sRGB-encoded document: identity on the sRGB display.
-        photocraft_engine::linear_doc::legacy_new(&mut app.session, &json!({"width": 64, "height": 64}));
+        app.session.execute("file.new", json!({"width": 64, "height": 64})).unwrap();
         app.run("edit.fill", json!({"color": "#cc8040"})).unwrap();
         let icc = |id: &str| Some(resolve_profile(id, None, None).unwrap().to_bytes());
         app.session.color.set_displays(Ok(vec![

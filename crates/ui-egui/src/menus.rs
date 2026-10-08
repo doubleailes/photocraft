@@ -561,9 +561,7 @@ fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
         return match m {
             "rgb" => Some(d.mode == ColorMode::Rgb),
             "grayscale" => Some(d.mode == ColorMode::Grayscale),
-            "bits8" => Some(d.depth == SampleType::U8),
-            // Half-float documents show under 16 Bits/Channel.
-            "bits16" => Some(matches!(d.depth, SampleType::U16 | SampleType::F16)),
+            "bits16" => Some(d.depth == SampleType::F16),
             "bits32" => Some(d.depth == SampleType::F32),
             _ => None,
         };
@@ -1027,8 +1025,7 @@ fn render_level_rows(ui: &mut egui::Ui, items: &[&MenuItem], depth: usize, click
             let hit = nav.row(ui, depth - 1, it.enabled, Some(&it.id), |ui, _| {
                 let r = ui.add_enabled(it.enabled, b);
                 let r = match it.id.as_str() {
-                    "image.mode.bits8" | "image.mode.bits16" => r.on_hover_text(crate::i18n::tr(lang, "Integer")),
-                    "image.mode.bits32" => r.on_hover_text(crate::i18n::tr(lang, "Floating point")),
+                    "image.mode.bits16" | "image.mode.bits32" => r.on_hover_text(crate::i18n::tr(lang, "Floating point")),
                     _ => r,
                 };
                 let hit = r.clicked() || released_on(ui, &r);

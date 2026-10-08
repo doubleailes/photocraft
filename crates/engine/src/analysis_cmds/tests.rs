@@ -3,7 +3,7 @@ use photocraft_doc::ColorMode;
 
 fn session(w: u32, h: u32, depth: u32) -> Session {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": w, "height": h, "depth": depth, "background": "white"}));
+    s.execute("file.new", json!({"width": w, "height": h, "depth": depth, "background": "white"})).unwrap();
     s
 }
 
@@ -68,7 +68,7 @@ fn features_area_perimeter_circularity() {
 
 #[test]
 fn record_selection_rows_respect_scale_and_data_points() {
-    for depth in [8, 16, 32] {
+    for depth in [16, 32] {
         let mut s = session(64, 48, depth);
         s.execute("select.all", json!({})).unwrap_or_default();
         s.execute("select.deselect", json!({})).unwrap_or_default();
@@ -85,12 +85,8 @@ fn record_selection_rows_respect_scale_and_data_points() {
         assert_eq!(sum["area"], (100.0 + 100.0) * 0.25);
         assert_eq!(sum["scaleUnits"], "mm");
         assert_eq!(sum["source"], "Selection");
-        // White background: gray max reads as white in the depth's range.
-        let white = match depth {
-            8 => 255.0,
-            16 => 32768.0,
-            _ => 1.0,
-        };
+        // White background: gray reads 1.0 in float documents.
+        let white = 1.0;
         assert!((sum["grayMean"].as_f64().unwrap() - white).abs() < white * 0.01, "{depth}: {sum}");
         assert_eq!(rows[1]["values"]["label"], "Feature 1");
         assert_eq!(rows[2]["values"]["width"], 10.0);

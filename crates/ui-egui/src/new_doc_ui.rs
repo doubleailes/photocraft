@@ -73,15 +73,8 @@ pub const CATEGORIES: &[(&str, &[Preset])] = &[
     ),
 ];
 
-const DEPTH_OPTIONS: &[(u64, &str, &str)] = &[(8, "8 bit", "Integer"), (16, "16 bit", "Integer"), (32, "32 bit (float)", "Floating point")];
-
-/// RGB and grayscale documents are linear floating point: half (16-bit) or 32-bit.
-const FLOAT_DEPTH_OPTIONS: &[(u64, &str, &str)] = &[(16, "16 bit", "Floating point"), (32, "32 bit (float)", "Floating point")];
-
-/// The depth choices for a colour mode (`file.new`'s `mode` key).
-fn depth_options(mode: &str) -> &'static [(u64, &'static str, &'static str)] {
-    if matches!(mode, "rgb" | "gray") { FLOAT_DEPTH_OPTIONS } else { DEPTH_OPTIONS }
-}
+/// Documents are linear floating point: half (16-bit) or 32-bit.
+const DEPTH_OPTIONS: &[(u64, &str, &str)] = &[(16, "16 bit", "Floating point"), (32, "32 bit (float)", "Floating point")];
 
 /// Width/Height units: (key, label, units per inch; 0 = pixels).
 pub const UNITS: &[(&str, &str, f32)] =
@@ -294,7 +287,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
                 if widgets::dropdown(ui, "nd-mode", &mut mode, &[("gray".to_string(), tl!("Grayscale")), ("rgb".to_string(), tl!("RGB Color"))], 110.0) {
                     f.insert("mode".into(), json!(mode));
                 }
-                let options = depth_options(&get_s(f, "mode", "rgb"));
+                let options = DEPTH_OPTIONS;
                 let mut depth = f.get("depth").and_then(Value::as_u64).filter(|d| options.iter().any(|o| o.0 == *d)).unwrap_or(16);
                 let depth_options: Vec<(u64, &str, &str)> = options.iter().map(|(bits, label, tooltip)| (*bits, *label, *tooltip)).collect();
                 if widgets::dropdown_with_tooltips(ui, "nd-depth", &mut depth, &depth_options, 120.0) {

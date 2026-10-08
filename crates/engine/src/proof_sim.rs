@@ -326,7 +326,7 @@ mod tests {
 
     fn session(mode: &str, depth: u32) -> Session {
         let mut s = Session::new();
-        crate::linear_doc::legacy_new(&mut s, &json!({"width": 8, "height": 8, "mode": mode, "depth": depth}));
+        s.execute("file.new", json!({"width": 8, "height": 8, "mode": mode, "depth": depth})).unwrap();
         s
     }
 
@@ -415,8 +415,10 @@ mod tests {
 
     #[test]
     fn thirty_two_bit_preview_options() {
-        let mut s = session("rgb", 8);
-        assert!(s.execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 1})).is_err(), "8-bit: disabled");
+        assert!(Session::new().execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 1})).is_err(), "no document: disabled");
+        // Half-float documents are linear too: the preview applies to them.
+        let mut s = session("rgb", 16);
+        assert!(s.execute("view.thirtyTwoBitPreviewOptions", json!({"exposure": 0})).is_ok());
         let mut s = session("rgb", 32);
         let d = s.active().unwrap().doc.clone();
         assert!(s.color.canvas_lut(&d, 5).unwrap().is_none());

@@ -359,11 +359,12 @@ impl Session {
         self.color.working(ColorMode::Rgb)
     }
 
-    /// The converter from picked colours to the active document's pixel values.
+    /// The converter from picked colours to the active document's pixel values. While a
+    /// command edits a layer mask or a channel, colours are data and pass unconverted.
     pub fn to_doc(&self) -> ColorConv {
         match self.active() {
-            Some(d) => ColorConv::for_doc(&d.doc, &self.picker_profile()),
-            None => ColorConv(None),
+            Some(d) if !self.data_target => ColorConv::for_doc(&d.doc, &self.picker_profile()),
+            _ => ColorConv(None),
         }
     }
 
@@ -403,41 +404,6 @@ impl Session {
             None => c,
         }
     }
-}
-
-/// File › New as it was before linear documents: an untagged document of `depth` bits (8,
-/// 16 or 32, default 8) whose colours are used as given. Only for tests of the integer paths,
-/// which half-float step 3 removes. Returns the document index.
-#[doc(hidden)]
-pub fn legacy_new(s: &mut Session, p: &Value) -> usize {
-    use photocraft_doc::{Layer, Size};
-    let num = |k: &str, d: u32| p.get(k).and_then(Value::as_f64).map_or(d, |v| v.round().clamp(1.0, 300_000.0) as u32);
-    let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("rgb") {
-        "gray" | "grayscale" => ColorMode::Grayscale,
-        _ => ColorMode::Rgb,
-    };
-    let depth = match p.get("depth").and_then(Value::as_u64).unwrap_or(8) {
-        16 => SampleType::U16,
-        32 => SampleType::F32,
-        _ => SampleType::U8,
-    };
-    let (name, size) = (p.get("name").and_then(Value::as_str).unwrap_or("Untitled"), Size::new(num("width", 1920), num("height", 1080)));
-    let bg = s.tools.background;
-    let mut doc = match p.get("background").and_then(Value::as_str).unwrap_or("white") {
-        "backgroundColor" => Document::with_background(name, size, mode, depth, Color::rgba(bg[0], bg[1], bg[2], 1.0)),
-        "transparent" => {
-            let mut d = Document::new(name, size, mode, depth);
-            d.layers.push(Layer::raster("Layer 1", d.pixel_format()));
-            d
-        }
-        "black" => Document::with_background(name, size, mode, depth, Color::BLACK),
-        hex => {
-            let c = color_value(&json!(hex)).unwrap_or([1.0; 4]);
-            Document::with_background(name, size, mode, depth, Color::rgba(c[0], c[1], c[2], c[3]))
-        }
-    };
-    doc.resolution_dpi = p.get("resolution").and_then(Value::as_f64).unwrap_or(72.0) as f32;
-    s.add_document(doc, None)
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ const DEPTHS: [u32; 3] = [8, 16, 32];
 /// White document with a black 20×20 square at (10, 10) on its Background layer.
 fn session(mode: &str, depth: u32) -> Session {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "mode": mode, "depth": depth}));
+    s.execute("file.new", json!({"width": 64, "height": 48, "mode": mode, "depth": depth})).unwrap();
     s.execute("select.rect", json!({"x": 10, "y": 10, "width": 20, "height": 20, "antiAlias": false})).unwrap();
     s.execute("edit.fill", json!({"color": "#000000"})).unwrap();
     s.execute("select.deselect", json!({})).unwrap();
@@ -77,11 +77,12 @@ fn magic_eraser_options() {
     s.execute("paint.magicEraser", json!({"x": 2, "y": 2, "opacity": 50, "antiAlias": false})).unwrap();
     assert!((alpha(&s, 2, 2) - 0.5).abs() < 0.01);
 
-    // Tolerance: a near-white grey is erased only within tolerance.
+    // Tolerance: a near-white grey is erased only within tolerance (#f0f0f0 is 0.87 in the
+    // linear document, 33 levels from white).
     for (tol, gone) in [(0.0, false), (40.0, true)] {
         let mut s = session("rgb", 8);
         s.execute("select.rect", json!({"x": 0, "y": 40, "width": 64, "height": 8, "antiAlias": false})).unwrap();
-        s.execute("edit.fill", json!({"color": "#e6e6e6"})).unwrap();
+        s.execute("edit.fill", json!({"color": "#f0f0f0"})).unwrap();
         s.execute("select.deselect", json!({})).unwrap();
         s.execute("paint.magicEraser", json!({"x": 2, "y": 2, "tolerance": tol, "antiAlias": false})).unwrap();
         assert_eq!(alpha(&s, 5, 44) == 0.0, gone, "tolerance {tol}");

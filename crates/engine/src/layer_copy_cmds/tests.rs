@@ -56,16 +56,18 @@ fn copies_the_selected_layers_above_the_destinations_active_layer_in_one_step() 
 
 #[test]
 fn converts_to_the_destinations_depth_and_colour_mode() {
-    for depth in [8, 16, 32] {
+    for (depth, to) in [(16, "image.mode.bits32"), (32, "image.mode.bits16")] {
         let (mut s, _) = two_docs(40, 30, depth);
         s.set_active(1);
         s.execute("image.mode.grayscale", json!({})).unwrap();
-        s.execute("image.mode.bits16", json!({})).unwrap();
+        s.execute(to, json!({})).unwrap();
+        let want = s.active().unwrap().doc.depth;
+        assert_ne!(want, s.documents()[0].doc.depth);
         s.set_active(0);
         let r = s.execute("layer.copyToDocument", json!({"document": 1})).unwrap();
         let id = copied(&r);
         let surf = doc(&s, 1).layer(id).unwrap().surface().unwrap();
-        assert_eq!(surf.format(), PixelFormat::new(ColorMode::Grayscale, SampleType::U16, true), "from {depth}-bit RGB");
+        assert_eq!(surf.format(), PixelFormat::new(ColorMode::Grayscale, want, true), "from {depth}-bit RGB");
         let px = surf.read_region(Rect::new(5, 7, 6, 8));
         assert!(px[0] > 0.1 && px[0] < 0.9 && px[1] == 1.0, "red as a mid grey, opaque: {px:?}");
     }

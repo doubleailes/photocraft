@@ -39,8 +39,7 @@ the later phases only convert at import and export and never branch on depth.
   2. **Done.** Make import and new documents produce f16 linear only. Convert U8/U16 sources at the door (details below).
   3. Delete the U8/U16 document paths and their tests. Keep integer types only for codec I/O and masks.
      * a. **Done.** Remove the non-RGB/gray modes (phase 8's mode removal, pulled forward; details below).
-     * b. Remove the integer depth commands (`image.mode.bits8`/`bits16`), the integer transfers and
-       `linear_doc::legacy_new`; convert any integer document at `add_document`.
+     * b. **Done.** No integer document in a session (details below).
   4. Benchmark at 24–36 MP before and after: tile memory, composite time, brush latency.
 
 ### Half-float step 2 (`crates/engine/src/linear_doc.rs`)
@@ -61,8 +60,8 @@ half-float documents follow the same path.
   Float files (EXR, HDR, 32-bit PSD) keep their values and depth. Files in other colour models are
   converted to RGB or gray before they reach the door (step 3a).
 * **New documents.** RGB/gray `file.new` makes 16-bit half float (or 32-bit float when asked), tagged linear.
-  The New dialog offers 16/32-bit float for RGB and gray. `image.mode.bits16f` converts an open
-  document; Image › Mode › 16 Bits/Channel shows checked for half float.
+  The New dialog offers 16/32-bit float. Image › Mode › 16 Bits/Channel (`image.mode.bits16`) converts
+  an open document to half float, 32 Bits/Channel to float (step 3b).
 * **Source depth.** `Document.source_depth` (saved in `.pcraft`) records the integer depth of
   the file a document came from. Saving a linear document to a format without float (PNG, JPEG,
   GIF, …), or to any non-HDR format when it came from an integer file, encodes it to sRGB/sGray at that depth (8-bit for
@@ -108,6 +107,22 @@ files are ignored), CMYK/Lab file export and the `channel.merge` CMYK/Lab target
   `edit.assignProfile` refuse CMYK and Lab profiles.
 * `file.new`, the New dialog, Contact Sheet and Conditional Mode Change offer RGB and Grayscale only.
   The perf scenario P33 (CMYK brush dab) is retired.
+
+### Half-float step 3b: no integer documents in a session
+
+* `Session::add_document` converts an integer document to linear half float, so every door (and
+  every scratch session a command makes) holds linear float documents only. `open_document` still
+  applies the Color Settings policy first.
+* Image › Mode offers 16 Bits/Channel (half float, `image.mode.bits16`) and 32 Bits/Channel;
+  8 Bits/Channel and the interim `image.mode.bits16f` are gone. Depth changes keep documents linear.
+* `linear_doc::legacy_new` (the test-only integer File › New) is gone; the tests that used it run on
+  linear documents and expect linear values.
+* Picked colours entering a layer mask or a channel are data, not colours: 50% gray is 0.5 coverage
+  (`Session::data_target`, set while a command targets a mask or channel).
+* Integer depths stay where they are data or files: codec I/O, `Document.source_depth` exports,
+  PSD/TIFF reading and the Photoshop-matching integer paths of `compose`/`algo`, which `photocraft_io`
+  uses for files as read (PSD oracle composites) before they reach a session.
+* Parity: 8 Bits/Channel is a Photoshop menu item this fork drops (floor 619 → 618).
 
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**

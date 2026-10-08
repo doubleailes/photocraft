@@ -333,7 +333,8 @@ fn convert_mode(s: &mut Session, mode: ColorMode, p: &Value) -> Result<Value> {
     crate::color_cmds::convert_mode(s, mode, p)
 }
 
-/// Image → Mode → 8/16/32 Bits/Channel.
+/// Image → Mode → 16 Bits/Channel (half float) or 32 Bits/Channel (float). Documents stay
+/// linear ([`crate::linear_doc`]); there are no integer document depths.
 fn convert_depth(s: &mut Session, depth: SampleType) -> Result<Value> {
     let current = s.active().ok_or(EngineError::NoDocument)?.doc.depth;
     if current == depth {
@@ -341,22 +342,9 @@ fn convert_depth(s: &mut Session, depth: SampleType) -> Result<Value> {
         return Ok(Value::Null);
     }
     s.edit("Bit Depth", |doc, _| {
-        crate::linear_doc::set_document_depth(doc, depth);
-        Ok(())
-    })?;
-    Ok(Value::Null)
-}
-
-/// 16-bit half float: RGB and gray documents become linear ([`crate::linear_doc`]); other
-/// modes change depth only.
-fn convert_to_half(s: &mut Session) -> Result<Value> {
-    let d = s.active().ok_or(EngineError::NoDocument)?;
-    if d.doc.depth == SampleType::F16 {
-        return Ok(Value::Null);
-    }
-    s.edit("Bit Depth", |doc, _| {
-        if !crate::linear_doc::to_linear(doc)? {
-            crate::linear_doc::set_document_depth(doc, SampleType::F16);
+        crate::linear_doc::to_linear(doc)?;
+        if doc.depth != depth {
+            crate::linear_doc::set_document_depth(doc, depth);
         }
         Ok(())
     })?;
@@ -434,19 +422,8 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             |s, p| convert_mode(s, ColorMode::Grayscale, p)
         ),
-        spec!("image.mode.bits8", "8 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U8)),
-        spec!("image.mode.bits16", "16 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U16)),
-        spec!("image.mode.bits32", "32 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::F32)),
-        CommandSpec {
-            id: "image.mode.bits16f",
-            label: "16 Bits/Channel (half float)",
-            menu: &[],
-            shortcut: None,
-            params: "{} — RGB and gray documents become linear half float",
-            enabled: has_doc,
-            run: |s, _| convert_to_half(s),
-            journal: true,
-        },
+        spec!("image.mode.bits16", "16 Bits/Channel", ["Image", "Mode"], "{} (linear half float)", has_doc, |s, _| convert_depth(s, SampleType::F16)),
+        spec!("image.mode.bits32", "32 Bits/Channel", ["Image", "Mode"], "{} (linear float)", has_doc, |s, _| convert_depth(s, SampleType::F32)),
         spec!("image.duplicate", "Duplicate…", ["Image"], r##"{"name":str,"mergedOnly":bool=false}"##, has_doc, duplicate),
     ]
 }
@@ -601,22 +578,25 @@ mod tests {
         s.execute("image.mode.grayscale", json!({})).unwrap();
         assert_eq!(doc(&s).mode, ColorMode::Grayscale);
         assert_eq!(doc(&s).layers[1].surface().unwrap().format().mode, ColorMode::Grayscale);
-        s.execute("image.mode.bits16", json!({})).unwrap();
-        assert_eq!(doc(&s).depth, SampleType::U16);
-        assert_eq!(doc(&s).layers[1].surface().unwrap().format().sample, SampleType::U16);
-        assert_eq!(doc(&s).layers[1].mask.as_ref().unwrap().surface.format().sample, SampleType::U16);
         s.execute("image.mode.bits32", json!({})).unwrap();
+        assert_eq!(doc(&s).depth, SampleType::F32);
+        assert_eq!(doc(&s).layers[1].surface().unwrap().format().sample, SampleType::F32);
+        assert_eq!(doc(&s).layers[1].mask.as_ref().unwrap().surface.format().sample, SampleType::F32);
+        assert!(crate::linear_doc::is_linear(doc(&s)));
         s.execute("image.mode.rgb", json!({})).unwrap();
-        s.execute("image.mode.bits8", json!({})).unwrap();
+        s.execute("image.mode.bits16", json!({})).unwrap();
         let d = doc(&s);
-        assert_eq!((d.mode, d.depth), (ColorMode::Rgb, SampleType::U8));
+        assert_eq!((d.mode, d.depth), (ColorMode::Rgb, SampleType::F16));
+        assert!(crate::linear_doc::is_linear(d));
         s.execute("edit.undo", json!({})).unwrap();
         assert_eq!(doc(&s).depth, SampleType::F32);
         let revision = s.active().unwrap().revision;
         s.execute("image.mode.bits32", json!({})).unwrap();
         assert_eq!(s.active().unwrap().revision, revision, "an unchanged bit depth must preserve the history branch");
         assert!(s.redo(), "selecting the current depth must not discard the undone conversion");
-        assert_eq!(doc(&s).depth, SampleType::U8);
+        assert_eq!(doc(&s).depth, SampleType::F16);
+        // There are no integer document depths.
+        assert!(s.execute("image.mode.bits8", json!({})).is_err());
     }
 
     #[test]

@@ -3,7 +3,7 @@ use photocraft_doc::vector::Subpath;
 
 fn session(depth: u32) -> Session {
     let mut s = Session::new();
-    crate::linear_doc::legacy_new(&mut s, &json!({"width": 64, "height": 48, "depth": depth, "background": "white"}));
+    s.execute("file.new", json!({"width": 64, "height": 48, "depth": depth, "background": "white"})).unwrap();
     s
 }
 
@@ -40,9 +40,10 @@ fn fade_blends_last_step_at_all_depths() {
 #[test]
 fn fade_with_blend_mode_and_invalidation() {
     let mut s = session(8);
-    s.execute("edit.fill", json!({"color": "#808080"})).unwrap();
+    // #bcbcbc is 0.503 in the linear document, so it inverts to about itself.
+    s.execute("edit.fill", json!({"color": "#bcbcbc"})).unwrap();
     s.execute("image.adjustments.invert", json!({})).unwrap();
-    // Difference of grey and inverted grey at 100%: |0.502 − 0.498| ≈ 0.
+    // Difference of grey and inverted grey at 100%: |0.503 − 0.497| ≈ 0.
     s.execute("edit.fade", json!({"opacity": 100, "mode": "difference"})).unwrap();
     assert!(px(&s, 1, 1)[0] < 0.02);
     // Any other edit in between disables Fade.

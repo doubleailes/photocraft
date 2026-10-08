@@ -348,7 +348,7 @@ mod tests {
 
     fn session() -> Session {
         let mut s = Session::new();
-        crate::linear_doc::legacy_new(&mut s, &json!({"width": 40, "height": 30, "background": "transparent"}));
+        s.execute("file.new", json!({"width": 40, "height": 30, "background": "transparent"})).unwrap();
         s
     }
 
@@ -370,7 +370,8 @@ mod tests {
             ("foreground", [1.0, 0.0, 0.0, 1.0]),
             ("background", [0.0, 0.0, 1.0, 1.0]),
             ("black", [0.0, 0.0, 0.0, 1.0]),
-            ("gray", [128.0 / 255.0, 128.0 / 255.0, 128.0 / 255.0, 1.0]),
+            // 50% Gray is a picked colour: linear in the document.
+            ("gray", [0.21586, 0.21586, 0.21586, 1.0]),
             ("white", [1.0; 4]),
         ] {
             s.execute(CMD, json!({"contents": c})).unwrap();
@@ -431,7 +432,8 @@ mod tests {
         s.execute("select.rect", json!({"x": 15, "y": 10, "width": 6, "height": 6})).unwrap();
         s.execute(CMD, json!({"contents": "white"})).unwrap();
         s.execute(CMD, json!({"contents": "contentAware", "colorAdaptation": false})).unwrap();
-        assert!(close(px(&s, 17, 12), [0x33 as f32 / 255.0, 0x66 as f32 / 255.0, 0x99 as f32 / 255.0, 1.0]), "{:?}", px(&s, 17, 12));
+        // #336699 in the linear document's values.
+        assert!(close(px(&s, 17, 12), [0.03310, 0.13287, 0.31855, 1.0]), "{:?}", px(&s, 17, 12));
     }
 
     /// `cargo test -p photocraft-engine --release --lib fill_cmds::tests::timing_24mp -- --ignored --nocapture`

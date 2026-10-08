@@ -608,6 +608,8 @@ impl Session {
         }
         self.coalesce_request = params.get("coalesce").and_then(Value::as_str).map(str::to_string);
         self.color_restrict = crate::channel_cmds::color_restriction(self, id, &run_params);
+        let outer_data_target = self.data_target;
+        self.data_target = crate::commands::is_mask_target(&run_params) || crate::channel_cmds::is_channel_target(&run_params);
         self.jobs.spawn = background;
         // Last-resort guard (AGENTS.md, Never crash): a command that panics anyway fails with an
         // error instead of taking the app down. `edit` only commits a document after its closure
@@ -617,6 +619,7 @@ impl Session {
         self.jobs.spawn = false;
         self.coalesce_request = None;
         self.color_restrict = None;
+        self.data_target = outer_data_target;
         let pending = self.jobs.pending.take();
         match (r, pending) {
             (Err(e), Some(job)) => {
