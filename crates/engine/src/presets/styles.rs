@@ -177,7 +177,10 @@ fn apply(s: &mut Session, p: &Value) -> Result<Value> {
     // Pattern overlays name their pattern; resolve to library patterns copied into the document.
     let mut effects = Vec::new();
     let mut pats = Vec::new();
-    for fx in style.effects {
+    // Presets hold picked colours.
+    let to_doc = s.to_doc();
+    for mut fx in style.effects {
+        to_doc.effect(&mut fx);
         let (fx, pat) = crate::pattern_cmds::resolve_effect(s, fx)?;
         effects.push(fx);
         pats.extend(pat);
@@ -249,7 +252,11 @@ fn new_preset(s: &mut Session, p: &Value) -> Result<Value> {
             Some(fx) => fx,
             None => {
                 if with_fx {
-                    l.effects.items.clone()
+                    // Saved as picked colours, like every preset.
+                    let from_doc = s.from_doc();
+                    let mut fx = l.effects.items.clone();
+                    fx.iter_mut().for_each(|e| from_doc.effect(e));
+                    fx
                 } else {
                     Vec::new()
                 }

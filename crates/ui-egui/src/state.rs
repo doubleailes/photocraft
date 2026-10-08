@@ -925,7 +925,7 @@ impl UiState {
     }
 
     pub fn new_document_fields() -> serde_json::Map<String, serde_json::Value> {
-        let v = serde_json::json!({"name": "Untitled-1", "width": 1920, "height": 1080, "mode": "rgb", "depth": 8, "background": "white"});
+        let v = serde_json::json!({"name": "Untitled-1", "width": 1920, "height": 1080, "mode": "rgb", "depth": 16, "background": "white"});
         v.as_object().cloned().unwrap_or_default()
     }
 }

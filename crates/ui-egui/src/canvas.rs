@@ -2375,7 +2375,8 @@ fn sample_eyedropper(app: &mut PhotocraftApp, x: f64, y: f64, mods: egui::Modifi
     }
 }
 
-/// The active document's composite colour at document point (x, y): what the Eyedropper picks.
+/// The active document's composite colour at document point (x, y): what the Eyedropper picks,
+/// as a picked colour (a linear document's values are converted to the working space).
 /// `None` off the image or over transparency.
 pub(crate) fn composite_color(app: &mut PhotocraftApp, x: f64, y: f64) -> Option<[f32; 3]> {
     if !(x.is_finite() && y.is_finite()) {
@@ -2383,7 +2384,10 @@ pub(crate) fn composite_color(app: &mut PhotocraftApp, x: f64, y: f64) -> Option
     }
     let v = app.run("document.pixel", json!({"x": x.floor(), "y": y.floor()})).ok()?;
     match serde_json::from_value::<Vec<f32>>(v).ok()?[..] {
-        [r, g, b, a] if a > 0.0 => Some([r, g, b]),
+        [r, g, b, a] if a > 0.0 => {
+            let [r, g, b, _] = app.session.from_doc_color([r, g, b, 1.0]);
+            Some([r, g, b])
+        }
         _ => None,
     }
 }

@@ -105,10 +105,10 @@ fn fill_of(l: &Layer) -> Option<&Fill> {
 /// The fill an in-progress edit shows (`None` when it can't apply, e.g. a stale index).
 fn edited_fill(app: &PhotocraftApp, layer: &Layer, canvas: Rect32, cmd: &str, p: &Value) -> Option<Fill> {
     let f = fill_of(layer)?;
-    let (fg, bg) = (app.session.tools.foreground, app.session.tools.background);
+    let (fg, bg, to_doc) = (app.session.fg(), app.session.bg(), app.session.to_doc());
     match cmd {
-        cmds::SET => cmds::apply_set(layer, f, canvas, p, fg, bg).ok(),
-        cmds::STOP => cmds::apply_stop(f, p, fg, bg).ok(),
+        cmds::SET => cmds::apply_set(layer, f, canvas, p, fg, bg, &to_doc).ok(),
+        cmds::STOP => cmds::apply_stop(f, p, fg, bg, &to_doc).ok(),
         _ => None,
     }
 }

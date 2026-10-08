@@ -40,6 +40,15 @@ pub const DEPTHS: &[(SampleType, &str, &str)] = &[
     (SampleType::F32, "32 Bits/Channel", "image.mode.bits32"),
 ];
 
+/// RGB and grayscale documents are linear floating point: half or 32-bit.
+pub const FLOAT_DEPTHS: &[(SampleType, &str, &str)] =
+    &[(SampleType::F16, "16 Bits/Channel", "image.mode.bits16f"), (SampleType::F32, "32 Bits/Channel", "image.mode.bits32")];
+
+/// The depth choices for a document of `mode`.
+fn depths_for(mode: ColorMode) -> &'static [(SampleType, &'static str, &'static str)] {
+    if matches!(mode, ColorMode::Rgb | ColorMode::Grayscale) { FLOAT_DEPTHS } else { DEPTHS }
+}
+
 /// Ruler units offered in the Rulers & Grids dropdown (`unitsAndRulers.rulers` values).
 pub const UNITS: &[(&str, &str)] = &[
     ("pixels", "Pixels"),
@@ -190,10 +199,11 @@ pub fn properties(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             ui.add_space(label_w + 8.0);
             let mut d = depth;
+            let depths = depths_for(mode);
             let opts: Vec<(SampleType, &str, &str)> =
-                DEPTHS.iter().map(|(d, l, _)| (*d, *l, if d.is_float() { "Floating point" } else { "Integer" })).collect();
+                depths.iter().map(|(d, l, _)| (*d, *l, if d.is_float() { "Floating point" } else { "Integer" })).collect();
             if widgets::dropdown_with_tooltips(ui, "doc-props-depth", &mut d, &opts, 150.0)
-                && let Some((_, _, id)) = DEPTHS.iter().find(|(x, _, _)| *x == d)
+                && let Some((_, _, id)) = depths.iter().find(|(x, _, _)| *x == d)
             {
                 run.push(((*id).to_string(), Value::Null));
             }
@@ -312,7 +322,7 @@ mod tests {
 
     #[test]
     fn document_dropdowns_map_to_live_mode_commands() {
-        for id in MODES.iter().map(|m| m.2).chain(DEPTHS.iter().map(|d| d.2)) {
+        for id in MODES.iter().map(|m| m.2).chain(DEPTHS.iter().chain(FLOAT_DEPTHS).map(|d| d.2)) {
             assert!(photocraft_engine::commands::find(id).is_some(), "{id} is not an engine command");
         }
     }

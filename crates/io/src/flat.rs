@@ -302,6 +302,9 @@ pub fn export_flat(doc: &Document, format: Format, opts: &ExportOptions) -> Resu
         img = cmyk_image_to_srgb(&img)?;
         warnings.push(format!("CMYK converted to sRGB for {format:?} through the document's colour profile"));
     }
+    if let Some(encoded) = encode_linear(&img, doc, format)? {
+        img = encoded;
+    }
     if matches!(format, Format::OpenExr | Format::Hdr) {
         // OpenEXR and Radiance HDR store linear light (read back as linear sRGB, see [`import_flat`]).
         if let Some(linear) = convert_rgb(&img, Builtin::LinearSrgb.profile(), Intent::RelativeColorimetric, false, CSample::F32)? {
@@ -376,6 +379,48 @@ fn convert_rgb(img: &Image, dst: &photocraft_cms::Profile, intent: photocraft_cm
         vals
     })?;
     Ok(Some(out.with_icc(None)))
+}
+
+/// A linear document (linear sRGB or linear gray) written to an integer format, or to any
+/// non-HDR format when it came from an integer file: encoded to sRGB / sGray and stored at the
+/// source file's depth (8-bit for documents created here), so opening and saving a PNG, JPEG or
+/// TIFF gives back the same kind of file. `None` when nothing needs encoding.
+fn encode_linear(img: &Image, doc: &Document, format: Format) -> Result<Option<Image>, IoError> {
+    use photocraft_cms::{Builtin, Intent, Profile, Transform};
+    if matches!(format, Format::OpenExr | Format::Hdr) {
+        return Ok(None);
+    }
+    let (linear, dst) = if img.layout().is_rgb() {
+        (Builtin::LinearSrgb.profile(), Builtin::Srgb.profile())
+    } else if img.layout().is_gray() {
+        (Builtin::LinearGray.profile(), Builtin::SGray.profile())
+    } else {
+        return Ok(None);
+    };
+    let Some(src) = img.icc.as_ref().and_then(|b| Profile::parse(b).ok()) else { return Ok(None) };
+    if src.color_space != linear.color_space || !src.same_colors(linear) {
+        return Ok(None);
+    }
+    let depths = format.caps().depths;
+    let integers: Vec<CSample> = depths.iter().copied().filter(|s| !s.is_float()).collect();
+    if integers.is_empty() || (doc.source_depth.is_none() && depths.iter().any(|s| s.is_float())) {
+        return Ok(None);
+    }
+    let want = csample(doc.source_depth.unwrap_or(SampleType::U8));
+    let sample = if integers.contains(&want) {
+        want
+    } else if integers.contains(&CSample::U16) {
+        CSample::U16
+    } else {
+        integers[0]
+    };
+    let t = Transform::new(&src, dst, Intent::RelativeColorimetric, false).map_err(|e| IoError::Unsupported(e.to_string()))?;
+    let stride = img.layout().channels();
+    let out = map_bands(img, img.layout(), sample, |mut vals| {
+        t.apply(&mut vals, stride);
+        vals
+    })?;
+    Ok(Some(out.with_icc(Some(dst.to_bytes().to_vec()))))
 }
 
 /// Colour-managed CMYK → sRGB for formats that cannot store CMYK (the document's embedded

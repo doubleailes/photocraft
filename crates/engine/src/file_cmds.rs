@@ -293,7 +293,8 @@ fn close_others(s: &mut Session, p: &Value) -> Result<Value> {
 fn revert(s: &mut Session) -> Result<Value> {
     let path = s.active().and_then(|d| d.path.clone()).ok_or(EngineError::Other("the document has never been saved".into()))?;
     let bytes = read_file(&path)?;
-    let fresh = import(&file_name(&path), &bytes)?;
+    let mut fresh = import(&file_name(&path), &bytes)?;
+    crate::linear_doc::linearize(&mut fresh)?;
     s.edit("Revert", |doc, active| {
         let (id, name) = (doc.id, doc.name.clone());
         *doc = fresh;
@@ -681,7 +682,9 @@ pub(crate) fn process_files(inputs: &[String], output: &str, format: &str, save:
             written.check(&out).map_err(EngineError::Other)?;
             let bytes = read_file(path)?;
             let mut scratch = Session::new();
-            let doc = import(&file_name(path), &bytes)?;
+            let mut doc = import(&file_name(path), &bytes)?;
+            // Processed linear, saved back at the file's own depth and encoding.
+            crate::linear_doc::linearize(&mut doc)?;
             scratch.add_document(doc, Some(path.clone()));
             f(&mut scratch)?;
             let d = scratch.active().ok_or(EngineError::NoDocument)?;
@@ -774,7 +777,9 @@ fn load_files_into_stack(s: &mut Session, p: &Value) -> Result<Value> {
     let mut docs = Vec::new();
     for path in &paths {
         let bytes = read_file(path)?;
-        docs.push((file_name(path), import(&file_name(path), &bytes)?));
+        let mut doc = import(&file_name(path), &bytes)?;
+        crate::linear_doc::linearize(&mut doc)?;
+        docs.push((file_name(path), doc));
     }
     let first = &docs[0].1;
     let w = docs.iter().map(|(_, d)| d.size.width).max().unwrap_or(1);
@@ -782,6 +787,7 @@ fn load_files_into_stack(s: &mut Session, p: &Value) -> Result<Value> {
     let mut stack = Document::new(stem(&paths[0]), photocraft_doc::Size::new(w, h), first.mode, first.depth);
     stack.resolution_dpi = first.resolution_dpi;
     stack.icc_profile = first.icc_profile.clone();
+    stack.source_depth = first.source_depth;
     let fmt = stack.pixel_format();
     // First file at the bottom, like Photoshop's script.
     for (name, d) in &docs {

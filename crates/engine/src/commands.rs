@@ -249,7 +249,7 @@ fn build() -> Vec<CommandSpec> {
             "New…",
             ["File"],
             Some("Cmd+N"),
-            r##"{"width":u32=1920,"height":u32=1080,"mode":"rgb|gray|cmyk|lab"="rgb","depth":8|16|32=8,"background":"white|black|backgroundColor|transparent|#rrggbb"="white","resolution":ppi=72,"name":str}"##,
+            r##"{"width":u32=1920,"height":u32=1080,"mode":"rgb|gray|cmyk|lab"="rgb","depth":8|16|32=16 (RGB and gray: 32 is 32-bit float, anything else half float; both linear),"background":"white|black|backgroundColor|transparent|#rrggbb"="white","resolution":ppi=72,"name":str}"##,
             always,
             |s, p| {
                 // A size given as a float (`512.0`, as JSON from a UI field) is still that size (#254).
@@ -268,14 +268,20 @@ fn build() -> Vec<CommandSpec> {
                     "lab" => ColorMode::Lab,
                     _ => ColorMode::Rgb,
                 };
-                let depth = match p.get("depth").and_then(Value::as_u64).unwrap_or(8) {
-                    16 => SampleType::U16,
-                    32 => SampleType::F32,
+                // RGB and gray documents are linear half float (or 32-bit float), see
+                // `linear_doc`; the other modes keep their integer depths.
+                let linear = crate::linear_doc::linear_profile(mode);
+                let depth = match (p.get("depth").and_then(Value::as_u64).unwrap_or(16), linear.is_some()) {
+                    (32, _) => SampleType::F32,
+                    (_, true) => SampleType::F16,
+                    (16, false) => SampleType::U16,
                     _ => SampleType::U8,
                 };
                 let name = p.get("name").and_then(Value::as_str).unwrap_or("Untitled").to_string();
                 let res = p.get("resolution").and_then(Value::as_f64).unwrap_or(72.0).clamp(1.0, 30_000.0) as f32;
-                let bgc = s.tools.background;
+                let picker = s.picker_profile();
+                let pick = |c: [f32; 4]| crate::linear_doc::to_linear_color(mode, &picker, c);
+                let bgc = pick(s.tools.background);
                 let mut doc = match p.get("background").and_then(Value::as_str).unwrap_or("white") {
                     "backgroundColor" => Document::with_background(name, Size::new(w, h), mode, depth, Color::rgba(bgc[0], bgc[1], bgc[2], 1.0)),
                     "transparent" => {
@@ -285,11 +291,14 @@ fn build() -> Vec<CommandSpec> {
                     }
                     "black" => Document::with_background(name, Size::new(w, h), mode, depth, Color::BLACK),
                     other => {
-                        let c = parse_hex(other).unwrap_or([1.0; 4]);
+                        let c = pick(parse_hex(other).unwrap_or([1.0; 4]));
                         Document::with_background(name, Size::new(w, h), mode, depth, Color::rgba(c[0], c[1], c[2], c[3]))
                     }
                 };
                 doc.resolution_dpi = res;
+                if let Some(lin) = linear {
+                    doc.icc_profile = Some(lin.to_bytes());
+                }
                 let i = s.add_document(doc, None);
                 Ok(json!({ "document": i }))
             }
@@ -313,7 +322,7 @@ fn build() -> Vec<CommandSpec> {
         ),
         cmd!("edit.clear", "Clear", ["Edit"], Some("Delete"), "{}", has_pixel_layer, |s, p| {
             let id = layer_param(s, p)?;
-            let bg = s.tools.background;
+            let bg = s.bg();
             s.edit("Clear", |doc, _| {
                 let sel = doc.selection.clone();
                 let area = sel.as_ref().map(|m| m.content_bounds()).unwrap_or(doc.bounds());
@@ -637,7 +646,7 @@ fn build() -> Vec<CommandSpec> {
             Ok(Value::Null)
         }),
         cmd!("layer.newFillLayer.solidColor", "Solid Color…", ["Layer", "New Fill Layer"], None, r##"{"color":"#rrggbb"=foreground}"##, has_doc, |s, p| {
-            let c = color_param(p, "color", s.tools.foreground);
+            let c = s.to_doc_color(color_param(p, "color", s.tools.foreground));
             let id = s.edit("New Color Fill Layer", |doc, active| {
                 let l = Layer::new(doc.next_layer_name("Color Fill"), LayerContent::Fill(Fill::Solid(Color::rgba(c[0], c[1], c[2], c[3]))));
                 let id = doc.insert_above(*active, l);
@@ -654,8 +663,8 @@ fn build() -> Vec<CommandSpec> {
             r##"{"from":"#rrggbb","to":"#rrggbb","angle":deg=90,"style":"linear|radial|angle|reflected|diamond","reverse":bool}"##,
             has_doc,
             |s, p| {
-                let a = color_param(p, "from", s.tools.foreground);
-                let b = color_param(p, "to", s.tools.background);
+                let a = s.to_doc_color(color_param(p, "from", s.tools.foreground));
+                let b = s.to_doc_color(color_param(p, "to", s.tools.background));
                 let angle = f32_or(p, "angle", 90.0);
                 let style = crate::layer_style::gradient_style(p.get("style").and_then(Value::as_str).unwrap_or("linear"));
                 let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);

@@ -625,7 +625,7 @@ fn smudge_cmd(s: &mut Session, p: &Value) -> Result<Value> {
     let (stroke, id) = parse_brush(s, p, CMD)?;
     let strength = num(p, "strength", 50.0).clamp(1.0, 100.0) / 100.0;
     let finger = flag(p, "fingerPainting", false);
-    let fg = s.tools.foreground;
+    let fg = s.fg();
     let all = sample_all_layers(p);
     let dmg = run_stroke(s, "Smudge Tool", id, p, |pre, surf, sel, lock| {
         let fmt = surf.format();

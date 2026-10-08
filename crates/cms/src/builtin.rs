@@ -36,10 +36,12 @@ pub enum Builtin {
     LabD50,
     /// Synthetic coated-offset CMYK (300 % total ink, medium GCR); see [`crate::synth`].
     CoatedCmyk,
+    /// Gray with a linear transfer function (half-float grayscale documents).
+    LinearGray,
 }
 
 impl Builtin {
-    pub const ALL: [Builtin; 10] = [
+    pub const ALL: [Builtin; 11] = [
         Builtin::Srgb,
         Builtin::DisplayP3,
         Builtin::AdobeRgbCompat,
@@ -50,6 +52,7 @@ impl Builtin {
         Builtin::SGray,
         Builtin::LabD50,
         Builtin::CoatedCmyk,
+        Builtin::LinearGray,
     ];
 
     /// Stable identifier used by commands and settings.
@@ -65,6 +68,7 @@ impl Builtin {
             Builtin::SGray => "sgray",
             Builtin::LabD50 => "lab-d50",
             Builtin::CoatedCmyk => "coated-cmyk",
+            Builtin::LinearGray => "linear-gray",
         }
     }
 
@@ -81,6 +85,7 @@ impl Builtin {
             Builtin::SGray => "sGray (sRGB tone curve, Photocraft)",
             Builtin::LabD50 => "Lab D50 identity (Photocraft)",
             Builtin::CoatedCmyk => crate::synth::DESCRIPTION,
+            Builtin::LinearGray => "Linear Gray (Photocraft)",
         }
     }
 
@@ -96,6 +101,7 @@ impl Builtin {
             "rec2020" | "bt2020" => Some(Builtin::Rec2020),
             "gray" | "graygamma22" | "gamma22" => Some(Builtin::GrayGamma22),
             "sgray" | "graysrgb" => Some(Builtin::SGray),
+            "lineargray" | "graylinear" => Some(Builtin::LinearGray),
             "lab" | "labd50" | "cielab" => Some(Builtin::LabD50),
             "cmyk" | "coatedcmyk" | "defaultcmyk" | "photocraftcoatedcmyk" => Some(Builtin::CoatedCmyk),
             _ => None,
@@ -105,7 +111,7 @@ impl Builtin {
 
     /// The profile (built once per process).
     pub fn profile(self) -> &'static Profile {
-        static CELLS: [OnceLock<Profile>; 10] = [const { OnceLock::new() }; 10];
+        static CELLS: [OnceLock<Profile>; 11] = [const { OnceLock::new() }; 11];
         // `ALL` lists the variants in declaration order (checked by `all_in_declaration_order`),
         // so the discriminant is the cell index.
         CELLS[self as usize].get_or_init(|| build(self))
@@ -261,6 +267,7 @@ fn build(b: Builtin) -> Profile {
         }
         Builtin::GrayGamma22 => gray(b.description(), Curve::Gamma(2.2)),
         Builtin::SGray => gray(b.description(), srgb_trc()),
+        Builtin::LinearGray => gray(b.description(), Curve::Gamma(1.0)),
         Builtin::LabD50 => lab(),
         // The shipped bytes are `synth::coated_cmyk()` (checked by the `regen` test); rebuild
         // them rather than crash if they ever fail to parse.

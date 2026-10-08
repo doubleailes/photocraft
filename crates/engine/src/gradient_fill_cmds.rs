@@ -18,6 +18,7 @@ use photocraft_geom::Rect;
 use serde_json::{Value, json};
 
 use crate::commands::{CommandSpec, blend_from_str, layer_param};
+use crate::linear_doc::ColorConv;
 use crate::presets::gradients::{GradientPreset, transparency_param};
 use crate::{EngineError, Result, Session};
 
@@ -76,11 +77,12 @@ pub fn style_name(s: GradientStyle) -> &'static str {
 }
 
 /// A stop colour: `"#rrggbb"`, `"#rrggbbaa"`, `[r, g, b, a?]` (0..1), `"foreground"` or
-/// `"background"`.
-fn parse_color(v: &Value, fg: [f32; 4], bg: [f32; 4]) -> Option<Color> {
+/// `"background"`. `fg` and `bg` are already document values; explicit colours are picked ones,
+/// converted by `to_doc`.
+fn parse_color(v: &Value, fg: [f32; 4], bg: [f32; 4], to_doc: &ColorConv) -> Option<Color> {
     let c = match v {
-        Value::String(s) if s == "foreground" => fg,
-        Value::String(s) if s == "background" => bg,
+        Value::String(s) if s == "foreground" => return Some(Color::rgba(fg[0], fg[1], fg[2], fg[3])),
+        Value::String(s) if s == "background" => return Some(Color::rgba(bg[0], bg[1], bg[2], bg[3])),
         Value::String(s) => {
             let h = s.trim_start_matches('#');
             let b = |i: usize| h.get(i..i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).map(|v| f32::from(v) / 255.0);
@@ -96,7 +98,7 @@ fn parse_color(v: &Value, fg: [f32; 4], bg: [f32; 4]) -> Option<Color> {
         }
         _ => return None,
     };
-    let c = c.map(|v| v.clamp(0.0, 1.0));
+    let c = to_doc.apply(c.map(|v| v.clamp(0.0, 1.0)));
     Some(Color::rgba(c[0], c[1], c[2], c[3]))
 }
 
@@ -163,7 +165,7 @@ fn frame_with_align(layer: &Layer, f: &Fill, canvas: Rect) -> Rect {
 /// Applies `gradient.fill.set` params to a gradient fill (`layer` gives its frame; `fg`/`bg`
 /// resolve stop colours). Pure, so the canvas previews a handle drag with exactly what the
 /// command will commit.
-pub fn apply_set(layer: &Layer, f: &Fill, canvas: Rect, p: &Value, fg: [f32; 4], bg: [f32; 4]) -> Result<Fill> {
+pub fn apply_set(layer: &Layer, f: &Fill, canvas: Rect, p: &Value, fg: [f32; 4], bg: [f32; 4], to_doc: &ColorConv) -> Result<Fill> {
     const CMD: &str = SET;
     let mut out = f.clone();
     let Fill::Gradient { stops, angle, scale, style, reverse, opacity_stops, midpoints, offset, dither, align } = &mut out else {
@@ -233,7 +235,7 @@ pub fn apply_set(layer: &Layer, f: &Fill, canvas: Rect, p: &Value, fg: [f32; 4],
             let t = pair.first().and_then(Value::as_f64).map(|v| v as f32).filter(|v| v.is_finite()).ok_or_else(|| bad(CMD, "stop location is a number"))?;
             let c = pair
                 .get(1)
-                .and_then(|c| parse_color(c, fg, bg))
+                .and_then(|c| parse_color(c, fg, bg, to_doc))
                 .ok_or_else(|| bad(CMD, "stop colour is \"#rrggbb\", [r,g,b,a], \"foreground\" or \"background\""))?;
             new.push((t.clamp(0.0, 1.0), c));
         }
@@ -273,7 +275,7 @@ pub fn new_layer(s: &Session, doc: &Document, p: &Value) -> Result<Layer> {
     let to = point(CMD, p, "to")?.ok_or_else(|| bad(CMD, "missing `to` [x, y]"))?;
     let style = style_param(CMD, p)?.unwrap_or_default();
     let g = preset_param(s, p, CMD)?;
-    let (stops, opacity_stops) = g.fill_stops(s.tools.foreground, s.tools.background);
+    let (stops, opacity_stops) = g.in_doc(&s.to_doc()).fill_stops(s.fg(), s.bg());
     let reverse = p.get("reverse").and_then(Value::as_bool).unwrap_or(false);
     let dither = p.get("dither").and_then(Value::as_bool).unwrap_or(true);
     let opacity = num(p, "opacity").unwrap_or(100.0).clamp(0.0, 100.0) / 100.0;
@@ -312,12 +314,12 @@ fn create(s: &mut Session, p: &Value) -> Result<Value> {
 fn set(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_param(s, p)?;
     let (fill, _) = gradient_of(s, id, SET)?;
-    let (fg, bg) = (s.tools.foreground, s.tools.background);
+    let (fg, bg) = (s.fg(), s.bg());
     let (layer, canvas) = {
         let d = s.active().ok_or(EngineError::NoDocument)?;
         (d.doc.layer(id).cloned().ok_or(EngineError::NoLayer(id))?, d.doc.bounds())
     };
-    let new = apply_set(&layer, &fill, canvas, p, fg, bg)?;
+    let new = apply_set(&layer, &fill, canvas, p, fg, bg, &s.to_doc())?;
     if new != fill {
         replace_fill(s, id, "Edit Gradient Fill", new)?;
     }
@@ -349,7 +351,7 @@ fn unpair(v: Vec<(f32, Color, f32)>) -> (Vec<(f32, Color)>, Vec<f32>) {
 }
 
 /// Applies a `gradient.fill.stop` edit to a gradient fill. Pure (see [`apply_set`]).
-pub fn apply_stop(f: &Fill, p: &Value, fg: [f32; 4], bg: [f32; 4]) -> Result<Fill> {
+pub fn apply_stop(f: &Fill, p: &Value, fg: [f32; 4], bg: [f32; 4], to_doc: &ColorConv) -> Result<Fill> {
     const CMD: &str = STOP;
     let mut out = f.clone();
     let Fill::Gradient { stops, opacity_stops, midpoints, .. } = &mut out else { return Err(bad(CMD, "not a gradient fill")) };
@@ -413,7 +415,7 @@ pub fn apply_stop(f: &Fill, p: &Value, fg: [f32; 4], bg: [f32; 4]) -> Result<Fil
             let t = location()?;
             // A new stop takes the colour the gradient has there (Photoshop), unless given.
             let c = match p.get("color") {
-                Some(c) => parse_color(c, fg, bg).ok_or_else(|| bad(CMD, "bad `color`"))?,
+                Some(c) => parse_color(c, fg, bg, to_doc).ok_or_else(|| bad(CMD, "bad `color`"))?,
                 None => {
                     let s = ramp.sample(t);
                     Color::rgba(s[0], s[1], s[2], ramp_color_alpha(f, t))
@@ -445,7 +447,7 @@ pub fn apply_stop(f: &Fill, p: &Value, fg: [f32; 4], bg: [f32; 4]) -> Result<Fil
         }
         "color" => {
             let i = index()?;
-            let c = p.get("color").and_then(|c| parse_color(c, fg, bg)).ok_or_else(|| bad(CMD, "missing or bad `color`"))?;
+            let c = p.get("color").and_then(|c| parse_color(c, fg, bg, to_doc)).ok_or_else(|| bad(CMD, "missing or bad `color`"))?;
             v.get_mut(i).ok_or_else(|| bad(CMD, format!("no colour stop {i}")))?.1 = c;
         }
         "midpoint" => {
@@ -487,7 +489,7 @@ fn ramp_color_alpha(f: &Fill, t: f32) -> f32 {
 fn stop(s: &mut Session, p: &Value) -> Result<Value> {
     let id = layer_param(s, p)?;
     let (fill, _) = gradient_of(s, id, STOP)?;
-    let new = apply_stop(&fill, p, s.tools.foreground, s.tools.background)?;
+    let new = apply_stop(&fill, p, s.fg(), s.bg(), &s.to_doc())?;
     if new != fill {
         replace_fill(s, id, "Edit Gradient Fill", new)?;
     }

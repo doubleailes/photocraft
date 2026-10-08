@@ -139,12 +139,15 @@ fn color_range(s: &mut Session, p: &Value) -> Result<Value> {
                 }
             }
             if p.get("color").is_some() || samples.is_empty() {
-                let color = if p.get("color").is_some() {
+                let [r, g, b] = if p.get("color").is_some() {
                     parse_color(p)
                 } else {
                     let [r, g, b, _] = s.tools.foreground;
                     [r, g, b]
                 };
+                // Matched against the composite, in the document's values.
+                let [r, g, b, _] = s.to_doc_color([r, g, b, 1.0]);
+                let color = [r, g, b];
                 samples.push(sel::RangeSample { color, at: None });
             }
             // Localized Color Clusters: Range is a percentage of the canvas's longer side.

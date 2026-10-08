@@ -174,7 +174,7 @@ fn new_artboard(s: &mut Session, p: &Value) -> Result<Value> {
     } else {
         rect_param(&json!({"x": p.get("x"), "y": p.get("y")}), base, cmd)?
     };
-    let background = background_param(p, cmd)?.unwrap_or_default();
+    let background = background_param(&crate::linear_doc::colors_in(p, &["color"], &s.to_doc()), cmd)?.unwrap_or_default();
     let name = p.get("name").and_then(Value::as_str).filter(|n| !n.is_empty()).map(str::to_string);
     let id = s.edit("New Artboard", |doc, active| {
         let mut g = Layer::group(name.unwrap_or_else(|| next_artboard_name(doc)), vec![]);
@@ -192,7 +192,7 @@ fn artboard_from_group(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let id = p.get("layer").and_then(Value::as_u64).map(LayerId).or(d.active_layer).ok_or(EngineError::Other("no active layer".into()))?;
     let canvas = d.doc.bounds();
-    let background = background_param(p, "layer.new.artboardFromGroup")?.unwrap_or_default();
+    let background = background_param(&crate::linear_doc::colors_in(p, &["color"], &s.to_doc()), "layer.new.artboardFromGroup")?.unwrap_or_default();
     let rect = s.edit("Artboard from Group", |doc, active| {
         if !doc.layers.iter().any(|t| t.id == id && t.is_group() && t.artboard().is_none()) {
             return Err(EngineError::Other("artboards are made from a top-level layer group".into()));
@@ -212,7 +212,7 @@ fn artboard_from_layers(s: &mut Session, p: &Value) -> Result<Value> {
     let d = s.active().ok_or(EngineError::NoDocument)?;
     let canvas = d.doc.bounds();
     let name = p.get("name").and_then(Value::as_str).map(str::to_string);
-    let background = background_param(p, "layer.new.artboardFromLayers")?.unwrap_or_default();
+    let background = background_param(&crate::linear_doc::colors_in(p, &["color"], &s.to_doc()), "layer.new.artboardFromLayers")?.unwrap_or_default();
     let (gid, rect) = s.edit("Artboard from Layers", |doc, active| {
         let ids = crate::layer_multi_cmds::top_level(doc, &sel);
         if ids.is_empty() || ids.iter().any(|id| doc.artboard_of(*id).is_some()) {
@@ -252,7 +252,7 @@ fn set_props(s: &mut Session, p: &Value) -> Result<Value> {
         base = Rect::from_xywh(base.x0, base.y0, w, h);
     }
     let rect = rect_param(p, base, cmd)?;
-    let background = background_param(p, cmd)?;
+    let background = background_param(&crate::linear_doc::colors_in(p, &["color"], &s.to_doc()), cmd)?;
     let name = p.get("name").and_then(Value::as_str).map(str::to_string);
     let move_contents = p.get("moveContents").and_then(Value::as_bool).unwrap_or(true);
     s.edit("Edit Artboard", |doc, _| {

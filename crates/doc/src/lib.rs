@@ -650,6 +650,9 @@ pub struct Document {
     pub mode: ColorMode,
     pub depth: SampleType,
     pub icc_profile: Option<Arc<Vec<u8>>>,
+    /// Integer bit depth of the file the pixels came from (`None`: created here, or a float
+    /// file). A linear document saved to an integer format is encoded back to this depth.
+    pub source_depth: Option<SampleType>,
     /// Bottom-to-top.
     pub layers: Vec<Layer>,
     pub channels: Vec<AlphaChannel>,
@@ -709,6 +712,7 @@ impl Document {
             mode,
             depth,
             icc_profile: None,
+            source_depth: None,
             layers: Vec::new(),
             channels: Vec::new(),
             guides: Guides::default(),

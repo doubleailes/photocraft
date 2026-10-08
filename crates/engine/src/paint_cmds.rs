@@ -37,7 +37,7 @@ fn point(p: &Value, k: &str) -> Option<(f32, f32)> {
 
 fn bucket(s: &mut Session, p: &Value) -> Result<Value> {
     let fg = s.tools.foreground;
-    let c = color(p.get("color"), fg);
+    let c = s.to_doc_color(color(p.get("color"), fg));
     let (x, y) = (f(p, "x", 0.0).floor() as i32, f(p, "y", 0.0).floor() as i32);
     let (tol, contiguous, aa, opacity) = (f(p, "tolerance", 32.0), b(p, "contiguous", true), b(p, "antiAlias", true), f(p, "opacity", 100.0) / 100.0);
     // Fill source: foreground colour (default) or a pattern (the Paint Bucket "Fill" dropdown).
@@ -88,8 +88,15 @@ fn gradient(s: &mut Session, p: &Value) -> Result<Value> {
     let stops: Vec<(f32, [f32; 4])> = match gradients::tool_stops(s, p)? {
         Some(st) => st,
         None => {
-            let colors: Vec<[f32; 4]> =
-                p.get("colors").and_then(Value::as_array).map(|a| a.iter().map(|v| color(Some(v), fg)).collect()).unwrap_or_else(|| vec![fg, bg]);
+            let to_doc = s.to_doc();
+            let colors: Vec<[f32; 4]> = p
+                .get("colors")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().map(|v| color(Some(v), fg)).collect())
+                .unwrap_or_else(|| vec![fg, bg])
+                .into_iter()
+                .map(|c| to_doc.apply(c))
+                .collect();
             let n = colors.len();
             let cs = colors.into_iter().enumerate().map(|(i, c)| (if n > 1 { i as f32 / (n - 1) as f32 } else { 0.0 }, c)).collect();
             gradients::apply_opacity(cs, &gradients::transparency_param(p, "paint.gradient")?.unwrap_or_default())

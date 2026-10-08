@@ -50,6 +50,7 @@ pub mod layer_multi_cmds;
 pub mod layer_nav_cmds;
 pub mod layer_style;
 pub mod lens_cmds;
+pub mod linear_doc;
 pub mod magnetic_cmds;
 pub mod mask_view_cmds;
 mod migrate_cmds;

@@ -16,6 +16,8 @@ use crate::{EngineError, Result, Session};
 pub struct Clip {
     pub surface: Surface,
     pub bounds: Rect,
+    /// ICC profile of the pixels (`None`: the working space, as for an image from another app).
+    pub icc_profile: Option<std::sync::Arc<Vec<u8>>>,
 }
 
 fn has_doc(s: &Session) -> std::result::Result<(), String> {
@@ -66,7 +68,7 @@ fn lift(src: &Surface, sel: Option<&Surface>, canvas: Rect) -> Clip {
     };
     let mut out = Surface::new(with_alpha);
     if area.is_empty() {
-        return Clip { surface: out, bounds: Rect::EMPTY };
+        return Clip { surface: out, bounds: Rect::EMPTY, icc_profile: None };
     }
     let conv = src.convert(with_alpha);
     let mut px = conv.read_region(area);
@@ -80,7 +82,7 @@ fn lift(src: &Surface, sel: Option<&Surface>, canvas: Rect) -> Clip {
     out.write_region(area, &px);
     out.prune();
     let bounds = out.content_bounds();
-    Clip { surface: out, bounds }
+    Clip { surface: out, bounds, icc_profile: None }
 }
 
 /// Merged composite of the visible document as a surface in the document's format.
@@ -103,6 +105,7 @@ fn copy(s: &mut Session, merged: bool) -> Result<Value> {
         return Err(EngineError::Other("Could not copy: the selected area is empty".into()));
     }
     let b = clip.bounds;
+    let clip = Clip { icc_profile: Some(crate::color_cmds::document_profile(&d.doc).to_bytes()), ..clip };
     s.clipboard = Some(clip);
     Ok(json!({"bounds": [b.x0, b.y0, b.width(), b.height()]}))
 }
@@ -148,6 +151,8 @@ fn paste(s: &mut Session, p: &Value, in_place: bool) -> Result<Value> {
         ((cx - (b.x0 + b.x1) as f64 / 2.0).round() as i32, (cy - (b.y0 + b.y1) as f64 / 2.0).round() as i32)
     };
     let moved = if dx == 0 && dy == 0 { clip.surface.clone() } else { photocraft_algo::resample::translate_surface(&clip.surface, dx, dy) };
+    // Pixels copied from another document (or app) are converted into this one's space.
+    let moved = s.clip_pixels_for(&clip, &moved, &d.doc);
     let target = PixelFormat::new(fmt.mode, fmt.sample, true);
     let surf = if moved.format() == target { moved } else { moved.convert(target) };
     let id = s.edit("Paste", |doc, active| {
@@ -162,7 +167,7 @@ fn paste(s: &mut Session, p: &Value, in_place: bool) -> Result<Value> {
 }
 
 /// A new document the size of the clipboard image, holding it as its one layer, in the pixel
-/// format it was copied in (#368).
+/// format and profile it was copied in (#368); integer RGB and gray become linear half float.
 fn new_from_clipboard(s: &mut Session) -> Result<Value> {
     let clip = s.clipboard.clone().ok_or(EngineError::Other("the clipboard is empty".into()))?;
     let b = clip.bounds;
@@ -172,13 +177,20 @@ fn new_from_clipboard(s: &mut Session) -> Result<Value> {
     }
     let fmt = clip.surface.format();
     let target = PixelFormat::new(fmt.mode, fmt.sample, true);
+    let profile = s.clip_profile(&clip);
     let moved = if b.x0 == 0 && b.y0 == 0 { clip.surface } else { photocraft_algo::resample::translate_surface(&clip.surface, -b.x0, -b.y0) };
     let mut doc = Document::new("Untitled", photocraft_geom::Size::new(w, h), fmt.mode, fmt.sample);
+    doc.icc_profile = Some(profile.to_bytes());
     let mut l = Layer::raster(doc.next_layer_name("Layer"), target);
     *crate::pixels_mut(&mut l)? = if moved.format() == target { moved } else { moved.convert(target) };
     doc.layers.push(l);
+    let report = crate::linear_doc::linearize_import(&mut doc);
     let i = s.add_document(doc, None);
-    Ok(json!({"document": i, "width": w, "height": h}))
+    let mut r = json!({"document": i, "width": w, "height": h});
+    if let Some(e) = report.get("linearizeError") {
+        r["linearizeError"] = e.clone();
+    }
+    Ok(r)
 }
 
 fn layer_via(s: &mut Session, cut: bool) -> Result<Value> {
@@ -203,7 +215,7 @@ fn layer_via(s: &mut Session, cut: bool) -> Result<Value> {
     if clip.bounds.is_empty() {
         return Err(EngineError::Other("Could not complete the command: the selected area is empty".into()));
     }
-    let bg = s.tools.background;
+    let bg = s.bg();
     let label = if cut { "Layer Via Cut" } else { "Layer Via Copy" };
     let nid = s.edit(label, |doc, active| {
         if cut {
@@ -483,7 +495,7 @@ pub fn specs() -> Vec<CommandSpec> {
         spec!("edit.cut", "Cut", &["Edit"], Some("Cmd+X"), "{}", has_pixels, |s, _| {
             let r = copy(s, false)?;
             let id = active_id(s)?;
-            let bg = s.tools.background;
+            let bg = s.bg();
             s.edit("Cut Pixels", |doc, _| clear_selected(doc, id, bg))?;
             Ok(r)
         }),

@@ -443,7 +443,8 @@ fn main() {
         let d = doc(&s);
         let l = d.layer(gid).expect("layer");
         let LayerContent::Fill(f) = &l.content else { panic!("not a fill") };
-        let f = photocraft_engine::gradient_fill_cmds::apply_set(l, f, d.bounds(), &json!({"to": to}), [0.0, 0.0, 0.0, 1.0], [1.0; 4]).expect("set");
+        let f = photocraft_engine::gradient_fill_cmds::apply_set(l, f, d.bounds(), &json!({"to": to}), [0.0, 0.0, 0.0, 1.0], [1.0; 4], &Default::default())
+            .expect("set");
         let mut shown = (*d).clone();
         shown.layer_mut(gid).expect("layer").content = LayerContent::Fill(f);
         std::hint::black_box(&shown);
@@ -456,7 +457,8 @@ fn main() {
         let d = doc(&s);
         let l = d.layer(gid).expect("layer");
         let LayerContent::Fill(f) = &l.content else { panic!("not a fill") };
-        let f = photocraft_engine::gradient_fill_cmds::apply_set(l, f, d.bounds(), &json!({"to": to}), [0.0, 0.0, 0.0, 1.0], [1.0; 4]).expect("set");
+        let f = photocraft_engine::gradient_fill_cmds::apply_set(l, f, d.bounds(), &json!({"to": to}), [0.0, 0.0, 0.0, 1.0], [1.0; 4], &Default::default())
+            .expect("set");
         let mut shown = (*d).clone();
         shown.layer_mut(gid).expect("layer").content = LayerContent::Fill(f);
         ms(t) + b.render(&shown, shown.bounds())

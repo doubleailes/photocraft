@@ -107,7 +107,7 @@ fn magic_eraser(s: &mut Session, p: &Value) -> Result<Value> {
     let region = sel::wand_region(&img, area, (x, y), tolerance, contiguous, anti_alias);
     drop(img);
     let Some(region) = region else { return Ok(damage(s, Rect::EMPTY, false)) };
-    let bg = s.tools.background;
+    let bg = s.bg();
     let dmg = s.edit("Magic Eraser", |doc, _| {
         let selection = doc.selection.clone();
         unlock_background(doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?);
@@ -135,8 +135,8 @@ fn background_eraser(s: &mut Session, p: &Value) -> Result<Value> {
         limits: enum_param(p, CMD, "limits", Limits::Contiguous, "discontiguous|contiguous|findEdges")?,
         tolerance: number(p, CMD, "tolerance", 50.0, 0.0..=100.0)? as f32 / 100.0,
         protect_foreground: flag(p, "protectForegroundColor", false),
-        foreground: s.tools.foreground,
-        background: s.tools.background,
+        foreground: s.fg(),
+        background: s.bg(),
     };
     let id = active_pixel_layer(s, CMD)?;
     {
