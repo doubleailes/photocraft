@@ -276,6 +276,42 @@ impl Transform {
         par_rows(src, src_stride, dst, dst_stride, |s, d| self.run_f32(s, src_stride, d, dst_stride, extra));
     }
 
+    /// 8-bit pixels in, float pixels out: the values [`Transform::convert_f32`] gives for the
+    /// inputs `v / 255` (to f32 rounding). Transforms that are input curves plus a matrix with
+    /// no output curves (a profile to its linear version, matrix/TRC to linear) read the curves
+    /// from their exact 256-entry tables; any other transform evaluates the exact pipeline per
+    /// pixel. Single-threaded: callers convert tiles in parallel. Trailing channels are copied
+    /// (as `v / 255`) when `copy_extra`.
+    pub fn convert_u8_to_f32(&self, src: &[u8], src_stride: usize, dst: &mut [f32], dst_stride: usize, copy_extra: bool) {
+        self.check(src_stride, dst_stride);
+        let extra = extra_channels(self, src_stride, dst_stride, copy_extra);
+        let tables = match &self.core {
+            Core::Shaper { curves8, matrix, .. } if self.post.is_none() && (curves8.is_empty() || curves8.len() == self.inputs) => Some((curves8, matrix)),
+            _ => None,
+        };
+        let mut v = [0.0f32; 16];
+        let mut mid = [0.0f32; 16];
+        for (sp, dp) in src.chunks_exact(src_stride).zip(dst.chunks_exact_mut(dst_stride)) {
+            for (k, x) in v.iter_mut().enumerate().take(self.inputs) {
+                let byte = sp[k];
+                *x = match tables {
+                    Some((curves8, _)) if !curves8.is_empty() => curves8.get(k).map_or(byte as f32 / 255.0, |t| t[byte as usize]),
+                    _ => byte as f32 / 255.0,
+                };
+            }
+            match tables {
+                Some((_, matrix)) => {
+                    apply_matrix(matrix, &v, &mut mid, self.inputs);
+                    dp[..self.outputs].copy_from_slice(&mid[..self.outputs]);
+                }
+                None => self.pipeline.eval(&v[..self.inputs], &mut dp[..self.outputs]),
+            }
+            for e in 0..extra {
+                dp[self.outputs + e] = sp[self.inputs + e] as f32 / 255.0;
+            }
+        }
+    }
+
     fn run_f32(&self, s: &[f32], ss: usize, d: &mut [f32], ds: usize, extra: usize) {
         let precise = self.opts.precise_float || matches!(self.core, Core::Exact);
         for (sp, dp) in s.chunks_exact(ss).zip(d.chunks_exact_mut(ds)) {

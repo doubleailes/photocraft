@@ -514,44 +514,55 @@ impl Surface {
     /// Tiles convert in parallel, and a same-model conversion (a depth change, alpha added or
     /// dropped) allocates nothing per pixel.
     pub fn convert(&self, to: PixelFormat) -> Surface {
-        let mut out = Surface::with_default(to, &convert_pixel(&self.format, &to, &self.default_pixel()));
+        let default = convert_pixel(&self.format, &to, &self.default_pixel());
+        self.map_tiles_into(to, &default, |src, dst| self.convert_tile(src, dst, &to))
+    }
+
+    /// A surface in `to` whose allocated tiles are `f(source tile bytes, destination tile
+    /// bytes)`, computed in parallel off wasm; the unallocated area is `default` (a pixel in
+    /// `to`). The destination bytes start zeroed.
+    pub fn map_tiles_into(&self, to: PixelFormat, default: &[f32], f: impl Fn(&[u8], &mut [u8]) + Sync) -> Surface {
+        let mut out = Surface::with_default(to, default);
+        let len = (TILE_SIZE * TILE_SIZE) as usize * to.bytes_per_pixel();
         let tiles: Vec<(TileCoord, &Tile)> = self.tiles.iter().map(|(c, t)| (*c, t.as_ref())).collect();
-        let converted: Vec<(TileCoord, Tile)> = map_tiles(&tiles, |t| self.convert_tile(t, &to));
-        for (c, tile) in converted {
+        let mapped = map_tiles(&tiles, |t| {
+            let mut data = vec![0u8; len];
+            f(&t.data, &mut data);
+            Tile { data: data.into_boxed_slice() }
+        });
+        for (c, tile) in mapped {
             out.tiles.insert(c, Arc::new(tile));
         }
         out
     }
 
     /// One tile of [`Surface::convert`].
-    fn convert_tile(&self, t: &Tile, to: &PixelFormat) -> Tile {
+    fn convert_tile(&self, src_bytes: &[u8], data: &mut [u8], to: &PixelFormat) {
         let from = &self.format;
         let px_count = (TILE_SIZE * TILE_SIZE) as usize;
         let (from_n, to_n) = (from.channels(), to.channels());
-        let mut data = vec![0u8; px_count * to.bytes_per_pixel()];
         let mut src = vec![0.0f32; from_n];
         let same_model = from.mode == to.mode;
         let colour_n = from.mode.color_channels();
         for i in 0..px_count {
             for (k, v) in src.iter_mut().enumerate() {
-                *v = read_sample(&t.data, from.sample, i * from_n + k);
+                *v = read_sample(src_bytes, from.sample, i * from_n + k);
             }
             if same_model {
                 // What `convert_pixel` returns for a same-model pixel, without its allocation.
-                for k in 0..colour_n {
-                    write_sample(&mut data, to.sample, i * to_n + k, src[k]);
+                for (k, v) in src.iter().take(colour_n).enumerate() {
+                    write_sample(data, to.sample, i * to_n + k, *v);
                 }
                 if to.alpha {
-                    let a = if from.alpha { src[colour_n] } else { 1.0 };
-                    write_sample(&mut data, to.sample, i * to_n + colour_n, a);
+                    let a = if from.alpha { src.get(colour_n).copied().unwrap_or(1.0) } else { 1.0 };
+                    write_sample(data, to.sample, i * to_n + colour_n, a);
                 }
             } else {
                 for (k, v) in convert_pixel(from, to, &src).iter().enumerate() {
-                    write_sample(&mut data, to.sample, i * to_n + k, *v);
+                    write_sample(data, to.sample, i * to_n + k, *v);
                 }
             }
         }
-        Tile { data: data.into_boxed_slice() }
     }
 
     /// Composite-friendly RGBA read (converts from the surface's model).
