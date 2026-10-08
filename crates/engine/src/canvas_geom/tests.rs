@@ -130,11 +130,11 @@ fn right_angle_turns_move_vectors_type_and_smart_objects() {
 
 #[test]
 fn turns_at_every_depth_and_mode() {
-    for (depth, mode) in [(16, "rgb"), (32, "rgb"), (8, "cmyk"), (16, "cmyk"), (8, "gray"), (16, "gray")] {
+    for (depth, mode) in [(16, "rgb"), (32, "rgb"), (8, "gray"), (16, "gray")] {
         check_turn(depth, mode, Turn::Cw90);
     }
     check_turn(32, "rgb", Turn::FlipHorizontal);
-    check_turn(8, "cmyk", Turn::Ccw90);
+    check_turn(8, "gray", Turn::Ccw90);
 }
 
 #[test]

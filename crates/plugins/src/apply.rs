@@ -12,8 +12,8 @@ use crate::{Error, Result};
 /// The `format` argument of `pc_filter`: bits 0–7 the source bit depth (8, 16 or 32; half float
 /// reports 16), bit 8 set
 /// when the last channel is (straight) alpha, bits 16–23 the colour mode as numbered in the PSD
-/// file format (1 Grayscale, 2 Indexed, 3 RGB, 4 CMYK, 7 Multichannel, 8 Duotone, 9 Lab;
-/// 0 Bitmap).
+/// file format: 1 Grayscale, 3 RGB (the other Photoshop codes, 0 Bitmap, 2 Indexed, 4 CMYK,
+/// 7 Multichannel, 8 Duotone and 9 Lab, are part of the ABI but PhotoCraft documents never use them).
 pub fn format_code(f: PixelFormat) -> u32 {
     let depth = match f.sample {
         SampleType::U8 => 8,
@@ -21,28 +21,16 @@ pub fn format_code(f: PixelFormat) -> u32 {
         SampleType::F32 => 32,
     };
     let mode = match f.mode {
-        ColorMode::Bitmap => 0,
         ColorMode::Grayscale => 1,
-        ColorMode::Indexed => 2,
         ColorMode::Rgb => 3,
-        ColorMode::Cmyk => 4,
-        ColorMode::Multichannel => 7,
-        ColorMode::Duotone => 8,
-        ColorMode::Lab => 9,
     };
     depth | (u32::from(f.alpha) << 8) | (mode << 16)
 }
 
 fn mode_name(m: ColorMode) -> &'static str {
     match m {
-        ColorMode::Bitmap => "bitmap",
         ColorMode::Grayscale => "grayscale",
-        ColorMode::Indexed => "indexed",
         ColorMode::Rgb => "rgb",
-        ColorMode::Cmyk => "cmyk",
-        ColorMode::Lab => "lab",
-        ColorMode::Multichannel => "multichannel",
-        ColorMode::Duotone => "duotone",
     }
 }
 

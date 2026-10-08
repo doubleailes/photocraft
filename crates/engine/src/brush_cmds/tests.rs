@@ -262,8 +262,8 @@ fn define_brush_from_selection() {
 }
 
 #[test]
-fn works_on_cmyk_and_16_bit() {
-    for (mode, depth) in [("cmyk", 8), ("rgb", 16), ("grayscale", 32)] {
+fn works_on_gray_and_every_depth() {
+    for (mode, depth) in [("grayscale", 16), ("rgb", 16), ("grayscale", 32)] {
         let mut s = Session::new();
         s.execute("file.new", json!({"width": 60, "height": 30, "mode": mode, "depth": depth})).unwrap();
         s.execute("paint.stroke", json!({"points": [[5, 15], [55, 15]], "preset": "Chalk", "color": "#000000"})).unwrap();

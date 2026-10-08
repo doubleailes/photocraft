@@ -69,8 +69,6 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
         let p = app.patch_preview.as_mut()?;
         match result {
             Ok((d, area)) => {
-                // Duotone documents display through their inks.
-                let d = photocraft_engine::mode_cmds::display_document(&d).unwrap_or(d);
                 p.shown = Some(Arc::new(d));
                 p.offsets.push((offset, area));
             }

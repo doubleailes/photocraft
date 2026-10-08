@@ -176,8 +176,6 @@ struct Resident {
     last_used: u64,
     /// Cell visit that last used it (least recently used pages are evicted first).
     stamp: u64,
-    /// CMYK profile the texels were converted with (`CmykSpace::id`, 0 = built-in / not CMYK).
-    cmyk: u64,
 }
 
 impl Resident {
@@ -413,8 +411,6 @@ pub struct Compositor {
     /// Whether the effect-map pipelines could be built (else documents with layer effects are
     /// [`Unsupported`] and use the CPU compositor).
     effect_maps: bool,
-    /// `CmykSpace::id` of the document being encoded (0: built-in coated CMYK).
-    cmyk: u64,
     /// The device's health (see [`Compositor::set_health`]); `None` = assumed healthy.
     health: Option<DeviceHealth>,
 }
@@ -604,7 +600,6 @@ impl Compositor {
             staged: 0,
             acc_format,
             effect_maps: map_error.is_none(),
-            cmyk: 0,
             health: None,
         }
         .with_texture_limit(device.limits().max_texture_dimension_2d)
@@ -834,10 +829,7 @@ impl Compositor {
         if let Some(f) = self.fault() {
             return Err(Unsupported(f.to_string()));
         }
-        // CMYK layers convert through the document's own CMYK profile (uploads and plan colours).
-        let space = photocraft_compose::cmyk_space(doc);
-        self.cmyk = space.as_ref().map_or(0, |s| s.id);
-        photocraft_color::convert::with_cmyk_space(space.as_ref(), || self.encode_scoped(device, queue, encoder, doc, region, sink, flush))
+        self.encode_scoped(device, queue, encoder, doc, region, sink, flush)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1239,8 +1231,7 @@ impl Compositor {
         }
         let format = surface.format();
         let kind = TexKind::for_surface(key.1, format);
-        let cmyk = if format.mode == photocraft_color::ColorMode::Cmyk { self.cmyk } else { 0 };
-        let stale = self.residents.get(&key).is_none_or(|r| r.region != region || r.kind != kind || r.format != format || r.cmyk != cmyk);
+        let stale = self.residents.get(&key).is_none_or(|r| r.region != region || r.kind != kind || r.format != format);
         if stale {
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("pc_compose_layer"),
@@ -1254,7 +1245,7 @@ impl Compositor {
             });
             let view = texture.create_view(&Default::default());
             let default_nonzero = surface.default_pixel().iter().any(|v| *v != 0.0);
-            let mut r = Resident { texture, view, region, kind, format, tiles: HashMap::new(), default_nonzero, doc, last_used: 0, stamp: 0, cmyk };
+            let mut r = Resident { texture, view, region, kind, format, tiles: HashMap::new(), default_nonzero, doc, last_used: 0, stamp: 0 };
             // A new page is assembled straight into a mapped staging buffer and copied in one go
             // (missing tiles read as the default pixel; the buffer starts zeroed).
             let bpp = kind.bytes_per_pixel();

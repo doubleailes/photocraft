@@ -107,7 +107,7 @@ fn every_new_filter_runs_changes_pixels_and_undoes_in_one_step() {
 
 #[test]
 fn new_filters_work_at_16_and_32_bit() {
-    for (depth, mode) in [(16, "rgb"), (32, "rgb"), (8, "cmyk"), (16, "lab"), (8, "gray")] {
+    for (depth, mode) in [(16, "rgb"), (32, "rgb"), (8, "gray"), (32, "gray")] {
         let mut s = Session::new();
         s.execute("file.new", json!({"width": 24, "height": 16, "depth": depth, "mode": mode})).unwrap();
         s.execute("layer.new.layer", json!({})).unwrap();

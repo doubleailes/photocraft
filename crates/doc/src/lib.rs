@@ -33,7 +33,7 @@ pub use effects::{
     Bevel, BevelContour, BevelStyle, BevelTechnique, BevelTexture, Contour, Effect, FxCommon, FxPaint, GlobalLight, Glow, GlowSource, GlowTechnique, Gradient,
     GradientStyle, Satin, Shadow, StrokeFx, StrokePosition,
 };
-pub use mode::{ColorTable, Duotone, DuotoneInk, StackMode};
+pub use mode::StackMode;
 pub use pattern::Pattern;
 pub use photocraft_color::{BlendMode, Color, ColorMode, PixelFormat, SampleType};
 pub use photocraft_geom::{Affine, Rect, Size};
@@ -674,10 +674,6 @@ pub struct Document {
     /// Patterns stored with the document (PSD `Patt`/`Pat2`/`Pat3`): those its layers use, plus
     /// any imported with it.
     pub patterns: Vec<Pattern>,
-    /// Indexed Color palette (Image › Mode › Color Table). Set while `mode` is Indexed.
-    pub color_table: Option<ColorTable>,
-    /// Duotone inks. Set while `mode` is Duotone.
-    pub duotone: Option<Duotone>,
     /// Window › Layer Comps, top to bottom as listed in the panel.
     pub layer_comps: Vec<LayerComp>,
     /// Id of the comp applied last (PSD `lastAppliedComp`); None = the document's own state.
@@ -724,8 +720,6 @@ impl Document {
             clipping_path: None,
             quick_mask: None,
             patterns: Vec::new(),
-            color_table: None,
-            duotone: None,
             layer_comps: Vec::new(),
             last_applied_comp: None,
             last_document_state: None,
@@ -755,12 +749,7 @@ impl Document {
 
     /// Pixel format for new raster layers in this document.
     pub fn pixel_format(&self) -> PixelFormat {
-        let mode = match self.mode {
-            ColorMode::Indexed | ColorMode::Multichannel => ColorMode::Rgb,
-            ColorMode::Bitmap | ColorMode::Duotone => ColorMode::Grayscale,
-            m => m,
-        };
-        PixelFormat::new(mode, self.depth, true)
+        PixelFormat::new(self.mode, self.depth, true)
     }
 
     pub fn bounds(&self) -> Rect {
@@ -942,10 +931,8 @@ mod tests {
 
     #[test]
     fn pixel_format_follows_mode_and_depth() {
-        let d = Document::new("c", Size::new(1, 1), ColorMode::Cmyk, SampleType::U16);
-        assert_eq!(d.pixel_format(), PixelFormat::new(ColorMode::Cmyk, SampleType::U16, true));
-        let b = Document::new("b", Size::new(1, 1), ColorMode::Bitmap, SampleType::U8);
-        assert_eq!(b.pixel_format().mode, ColorMode::Grayscale);
+        let d = Document::new("g", Size::new(1, 1), ColorMode::Grayscale, SampleType::F16);
+        assert_eq!(d.pixel_format(), PixelFormat::new(ColorMode::Grayscale, SampleType::F16, true));
     }
 
     #[test]

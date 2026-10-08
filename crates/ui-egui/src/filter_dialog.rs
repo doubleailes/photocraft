@@ -136,9 +136,6 @@ pub const PREVIEWED: &[&str] = &[
     "image.adjustments.matchColor",
     "image.adjustments.hdrToning",
     "image.rotation.arbitrary",
-    "image.mode.indexedColor",
-    "image.mode.bitmap",
-    "image.mode.duotone",
     "layer.matting.defringe",
     "layer.matting.colorDecontaminate",
     "layer.layerStyle.scaleEffects",
@@ -161,7 +158,6 @@ pub fn has_dialog(command: &str) -> bool {
                 | "edit.convertToProfile"
                 | "view.proofSetup"
                 | "layer.layerStyle.globalLight"
-                | "image.mode.colorTable"
         ))
         && photocraft_engine::commands::find(command).is_some_and(|c| !parse_spec(c.params).is_empty())
 }

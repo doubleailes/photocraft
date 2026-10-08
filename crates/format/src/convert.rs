@@ -237,8 +237,6 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
             .iter()
             .map(|p| PatternM { id: p.id.clone(), name: p.name.clone(), width: p.width, height: p.height, surface: surface_m(&p.surface, sink) })
             .collect(),
-        color_table: d.color_table.clone(),
-        duotone: d.duotone.clone(),
         variables: d.variables.clone(),
         timeline: d.timeline.clone(),
         layer_comps: d.layer_comps.iter().map(|c| comp_m(c, sink)).collect(),
@@ -554,8 +552,6 @@ impl Loader<'_> {
             clipping_path: m.clipping_path.clone(),
             quick_mask,
             patterns,
-            color_table: m.color_table.clone(),
-            duotone: m.duotone.clone(),
             variables: m.variables.clone(),
             timeline: m.timeline.clone(),
             layer_comps,

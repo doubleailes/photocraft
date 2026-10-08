@@ -3,12 +3,9 @@
 
 use std::sync::Arc;
 
-use photocraft_cms::synth::{CmykParams, cmyk_profile};
 use photocraft_cms::{Builtin, Intent, Profile, Transform};
-use photocraft_color::{Color, ColorMode, PixelFormat, SampleType};
-use photocraft_doc::{Document, Layer, LayerContent, Size};
-use photocraft_geom::Rect;
-use photocraft_raster::Surface;
+use photocraft_color::{Color, ColorMode, SampleType};
+use photocraft_doc::{Document, Size};
 use serde_json::json;
 
 use crate::Session;
@@ -26,24 +23,6 @@ fn gray_doc(profile: &Profile, v: f32) -> Document {
     let mut d = Document::with_background("t", Size::new(8, 8), ColorMode::Grayscale, SampleType::U8, Color::gray(v));
     d.icc_profile = Some(profile.to_bytes());
     d
-}
-
-/// A CMYK document of two layers (so composites go through the compositor): the ink below and
-/// an empty layer on top.
-fn cmyk_doc(profile: Option<&Profile>, ink: [f32; 4]) -> Document {
-    let fmt = PixelFormat::new(ColorMode::Cmyk, SampleType::U8, true);
-    let mut d = Document::new("t", Size::new(8, 8), ColorMode::Cmyk, SampleType::U8);
-    let mut s = Surface::new(fmt);
-    s.fill_rect(Rect::new(0, 0, 8, 8), &[ink[0], ink[1], ink[2], ink[3], 1.0]);
-    d.layers.push(Layer::new("ink", LayerContent::Raster(s)));
-    d.layers.push(Layer::new("empty", LayerContent::Raster(Surface::new(fmt))));
-    d.icc_profile = profile.map(Profile::to_bytes);
-    d
-}
-
-/// Synthetic CMYK profile unlike the built-in coated one (heavier dot gain, small tables).
-fn test_cmyk() -> Profile {
-    cmyk_profile(&CmykParams { description: "Test Uncoated CMYK".into(), tvi: [0.26, 0.26, 0.26, 0.3], grid_a2b: 7, grid_b2a: 11, ..Default::default() })
 }
 
 /// What the CPU canvas shows at the centre pixel (RGBA8).
@@ -80,10 +59,9 @@ fn srgb_is_the_identity_fast_path() {
         assert!(s.color.canvas_lut(&d, 9).unwrap().is_none(), "no GPU LUT either");
         assert!(close(shown(&s, &d), [204.0, 127.5, 76.5], 0.6));
     }
-    // Untagged gray (sGray), CMYK (shown in sRGB) and Lab composites are sRGB too.
+    // Untagged gray (sGray) composites are sRGB too.
     let g = Document::with_background("g", Size::new(4, 4), ColorMode::Grayscale, SampleType::U8, Color::gray(0.3));
     assert!(s.color.canvas_display(&g).unwrap().is_identity());
-    assert!(s.color.canvas_display(&cmyk_doc(None, [0.1, 0.5, 0.5, 0.0])).unwrap().is_identity());
     // Cached: the same Arc for the same profiles.
     let d = rgb_doc(Some(Builtin::DisplayP3.profile()), [0.5; 3], SampleType::U8);
     assert!(Arc::ptr_eq(&s.color.canvas_display(&d).unwrap(), &s.color.canvas_display(&d).unwrap()));
@@ -125,33 +103,6 @@ fn wide_gamut_and_gray_fixtures_display_correctly() {
     assert!(!s.color.canvas_display(&d).unwrap().is_identity());
     let got = shown(&s, &d);
     assert!(close(got, [18.6; 3], TOL), "{got:?}");
-}
-
-#[test]
-fn embedded_cmyk_profile_is_used_for_display_and_flat_export() {
-    let s = Session::new();
-    let p = test_cmyk();
-    let ink = [0.1, 0.6, 0.7, 0.05];
-    let want = reference(&p, &ink);
-    let coated = reference(Builtin::CoatedCmyk.profile(), &ink);
-    assert!(far(want, coated, 4.0), "the fixture differs from the default: {want:?} {coated:?}");
-    let d = cmyk_doc(Some(&p), ink);
-    let got = shown(&s, &d);
-    assert!(close(got, want, TOL), "canvas {got:?} vs {want:?} (built-in would be {coated:?})");
-    // Untagged documents keep the built-in coated CMYK.
-    assert!(close(shown(&s, &cmyk_doc(None, ink)), coated, TOL));
-    // Flat export of the (layered) document writes sRGB through the embedded profile.
-    let r = photocraft_io::export(&d, "out.png", &photocraft_io::ExportOptions::default()).unwrap();
-    let img = photocraft_codecs::decode(&r.bytes).unwrap().convert(photocraft_codecs::ChannelLayout::Rgba, photocraft_codecs::SampleType::U8);
-    let px = &img.data()[(4 * 8 + 4) * 4..][..3];
-    assert!(close([px[0] as f32, px[1] as f32, px[2] as f32], want, TOL), "export {px:?} vs {want:?}");
-    // A single-layer CMYK document exported to a format without CMYK converts the same way.
-    let mut one = d.clone();
-    one.layers.truncate(1);
-    let r = photocraft_io::export(&one, "out.png", &photocraft_io::ExportOptions::default()).unwrap();
-    let img = photocraft_codecs::decode(&r.bytes).unwrap().convert(photocraft_codecs::ChannelLayout::Rgba, photocraft_codecs::SampleType::U8);
-    let px = &img.data()[(4 * 8 + 4) * 4..][..3];
-    assert!(close([px[0] as f32, px[1] as f32, px[2] as f32], want, TOL), "single-layer export {px:?} vs {want:?}");
 }
 
 #[test]

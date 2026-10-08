@@ -438,7 +438,7 @@ mod tests {
 
     #[test]
     fn coverage_composite_copies_exactly_at_full_hardness() {
-        for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F, PixelFormat::CMYKA8, PixelFormat::GRAYA8] {
+        for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8] {
             let mut s = Surface::new(fmt);
             s.fill_rect(
                 Rect::new(0, 0, 64, 64),

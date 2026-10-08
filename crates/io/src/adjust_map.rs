@@ -11,7 +11,7 @@
 //! stay [`Adjustment::Unsupported`] and are written back verbatim.
 
 use photocraft_doc::Adjustment;
-use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel, ToneSpace};
+use photocraft_doc::adjust::{CurvePoint, HueRange, LevelsChannel};
 use photocraft_psd::descriptor::{Descriptor, Value, VersionedDescriptor};
 
 /// All PSD adjustment keys recognized as adjustment layers.
@@ -71,8 +71,8 @@ fn parse_curves(d: &[u8]) -> Option<Adjustment> {
     }
     let mut it = curves.into_iter();
     let master = it.next()?;
-    let (r, g, b, k) = (it.next()?, it.next()?, it.next()?, it.next()?);
-    Some(Adjustment::Curves { master, per_channel: [r, g, b], space: ToneSpace::Rgb, black: k })
+    let (r, g, b) = (it.next()?, it.next()?, it.next()?);
+    Some(Adjustment::Curves { master, per_channel: [r, g, b] })
 }
 
 fn desc_num(d: &Descriptor, key: &str) -> Option<f32> {
@@ -91,16 +91,19 @@ fn desc_bool(d: &Descriptor, key: &str) -> Option<bool> {
     }
 }
 
-/// Channel interpretation of per-channel Levels/Curves records.
+/// Channel interpretation of per-channel Levels/Curves records (the file's colour model; the
+/// document is RGB or grayscale).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Channels {
     /// Records 1..=3 are R, G, B.
     Rgb,
     /// Record 1 is the gray channel (applied to all three display channels).
     Gray,
-    /// Records 1..=4 are cyan, magenta, yellow, black ([`ToneSpace::Cmyk`]).
+    /// A CMYK file: records 1..=4 are cyan, magenta, yellow, black. Ink channels have no RGB
+    /// equivalent: the composite record (channel brightness) is kept, the ink records dropped.
     Cmyk,
-    /// Records 1..=3 are lightness, a, b ([`ToneSpace::Lab`]).
+    /// A Lab file: records 1..=3 are lightness, a, b, with no composite record. The lightness
+    /// record becomes the composite one; a and b are dropped.
     Lab,
     /// Channel records do not map to display channels (multichannel, indexed…); ignored.
     Other,
@@ -112,33 +115,21 @@ pub enum Channels {
 pub fn parse(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>, channels: Channels) -> Adjustment {
     // A CMYK Channel Mixer (any record using the fourth, black, source) has no RGB meaning:
     // keep it raw. Mixers written by `write` leave that source at 0 and map in every mode.
-    if key == b"mixr" && channels == Channels::Other && (0..).map_while(|r| bei16(data, 4 + r * 10 + 6)).any(|k| k != 0) {
+    if key == b"mixr" && channels != Channels::Rgb && channels != Channels::Gray && (0..).map_while(|r| bei16(data, 4 + r * 10 + 6)).any(|k| k != 0) {
         return unsupported(key, data);
     }
     let mut a = parse_any(key, data, cged);
+    let line = || vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }];
     match (&mut a, channels) {
-        (Adjustment::Levels { space, black, .. }, Channels::Cmyk) | (Adjustment::Levels { space, black, .. }, Channels::Lab) => {
-            *space = if channels == Channels::Cmyk { ToneSpace::Cmyk } else { ToneSpace::Lab };
-            if channels == Channels::Lab {
-                *black = LevelsChannel::default();
-            }
+        (_, Channels::Rgb) => {}
+        (Adjustment::Levels { master, per_channel }, Channels::Lab) => {
+            *master = per_channel[0].clone();
+            *per_channel = Default::default();
         }
-        (Adjustment::Curves { space, black, .. }, Channels::Cmyk) => {
-            *space = ToneSpace::Cmyk;
-            if photocraft_doc::adjust::is_identity_curve(black) {
-                black.clear();
-            }
+        (Adjustment::Curves { master, per_channel }, Channels::Lab) => {
+            *master = per_channel[0].clone();
+            *per_channel = [line(), line(), line()];
         }
-        (Adjustment::Curves { space, black, .. }, Channels::Lab) => {
-            *space = ToneSpace::Lab;
-            black.clear();
-        }
-        (Adjustment::Levels { black, .. }, _) => *black = LevelsChannel::default(),
-        (Adjustment::Curves { black, .. }, _) => black.clear(),
-        _ => {}
-    }
-    match (&mut a, channels) {
-        (_, Channels::Rgb | Channels::Cmyk | Channels::Lab) => {}
         (Adjustment::Levels { per_channel, .. }, Channels::Gray) => {
             let g = per_channel[0].clone();
             *per_channel = [g.clone(), g.clone(), g];
@@ -147,11 +138,8 @@ pub fn parse(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>, channels: Channels
             let g = per_channel[0].clone();
             *per_channel = [g.clone(), g.clone(), g];
         }
-        (Adjustment::Levels { per_channel, .. }, Channels::Other) => *per_channel = Default::default(),
-        (Adjustment::Curves { per_channel, .. }, Channels::Other) => {
-            let line = || vec![CurvePoint { input: 0.0, output: 0.0 }, CurvePoint { input: 1.0, output: 1.0 }];
-            *per_channel = [line(), line(), line()];
-        }
+        (Adjustment::Levels { per_channel, .. }, Channels::Cmyk | Channels::Other) => *per_channel = Default::default(),
+        (Adjustment::Curves { per_channel, .. }, Channels::Cmyk | Channels::Other) => *per_channel = [line(), line(), line()],
         _ => {}
     }
     a
@@ -200,8 +188,7 @@ fn parse_any(key: &[u8; 4], data: &[u8], cged: Option<&[u8]>) -> Adjustment {
             let r = levels_rec(data, 12)?;
             let g = levels_rec(data, 22)?;
             let b = levels_rec(data, 32)?;
-            let k = levels_rec(data, 42).unwrap_or_default();
-            Some(Adjustment::Levels { master: m, per_channel: [r, g, b], space: ToneSpace::Rgb, black: k })
+            Some(Adjustment::Levels { master: m, per_channel: [r, g, b] })
         })(),
         b"curv" => parse_curves(data),
         b"selc" => parse_selective(data),
@@ -563,25 +550,22 @@ pub fn write(adj: &Adjustment) -> Vec<([u8; 4], Vec<u8>)> {
             v.push(1); // color space flag (spec: "1 byte")
             return vec![(*b"expA", v)];
         }
-        Adjustment::Levels { master, per_channel, space, black } => {
+        Adjustment::Levels { master, per_channel } => {
             put16(&mut v, 2);
             levels_write(&mut v, master);
             for c in per_channel {
                 levels_write(&mut v, c);
             }
-            let ident = LevelsChannel::default();
-            levels_write(&mut v, if *space == ToneSpace::Cmyk { black } else { &ident });
-            for _ in 5..29 {
+            for _ in 4..29 {
                 levels_write(&mut v, &LevelsChannel::default());
             }
             return vec![(*b"levl", v)];
         }
-        Adjustment::Curves { master, per_channel, space, black } => {
+        Adjustment::Curves { master, per_channel } => {
             v.push(0);
             put16(&mut v, 1);
-            let ink = *space == ToneSpace::Cmyk && black.len() >= 2;
-            v.extend_from_slice(&(if ink { 0b11111u32 } else { 0b1111 }).to_be_bytes());
-            for c in std::iter::once(master).chain(per_channel.iter()).chain(ink.then_some(black)) {
+            v.extend_from_slice(&0b1111u32.to_be_bytes());
+            for c in std::iter::once(master).chain(per_channel.iter()) {
                 put16(&mut v, c.len().min(19) as u16);
                 for p in c.iter().take(19) {
                     put16(&mut v, q255(p.output));
@@ -765,31 +749,28 @@ mod tests {
         rt(Adjustment::HueSaturation { hue: -10.0, saturation: 0.0, lightness: 0.0, colorize: false, ranges });
         rt(Adjustment::Exposure { exposure: 1.5, offset: -0.01, gamma: 0.9 });
         let lc = |a: u16, b: u16| LevelsChannel { in_black: f32::from(a) / 255.0, in_white: f32::from(b) / 255.0, gamma: 1.2, out_black: 0.0, out_white: 1.0 };
-        rt(Adjustment::Levels {
-            master: lc(10, 240),
-            per_channel: [lc(0, 255), lc(5, 250), lc(20, 200)],
-            space: ToneSpace::Rgb,
-            black: LevelsChannel::default(),
-        });
+        rt(Adjustment::Levels { master: lc(10, 240), per_channel: [lc(0, 255), lc(5, 250), lc(20, 200)] });
         let pts = |v: &[(u8, u8)]| v.iter().map(|&(i, o)| CurvePoint { input: f32::from(i) / 255.0, output: f32::from(o) / 255.0 }).collect::<Vec<_>>();
         rt(Adjustment::Curves {
             master: pts(&[(0, 0), (128, 150), (255, 255)]),
             per_channel: [pts(&[(0, 10), (255, 255)]), pts(&[(0, 0), (255, 245)]), pts(&[(0, 0), (64, 32), (255, 255)])],
-            space: ToneSpace::Rgb,
-            black: Vec::new(),
         });
-        // CMYK ink curves and levels keep their black record.
-        let ink = Adjustment::Curves {
-            master: pts(&[(0, 0), (255, 255)]),
-            per_channel: [pts(&[(0, 0), (255, 255)]), pts(&[(0, 30), (255, 255)]), pts(&[(0, 0), (255, 255)])],
-            space: ToneSpace::Cmyk,
-            black: pts(&[(0, 0), (128, 100), (255, 255)]),
-        };
-        let b = write(&ink);
-        assert_eq!(parse(&b[0].0, &b[0].1, None, Channels::Cmyk), ink);
-        let inkl = Adjustment::Levels { master: lc(0, 255), per_channel: [lc(0, 255), lc(5, 250), lc(0, 255)], space: ToneSpace::Cmyk, black: lc(30, 255) };
-        let b = write(&inkl);
-        assert_eq!(parse(&b[0].0, &b[0].1, None, Channels::Cmyk), inkl);
+        // From a CMYK file, ink records are dropped and the composite kept; from a Lab file the
+        // lightness record becomes the composite.
+        let line = pts(&[(0, 0), (255, 255)]);
+        let master = pts(&[(0, 0), (128, 150), (255, 255)]);
+        let c = Adjustment::Curves { master: master.clone(), per_channel: [line.clone(), pts(&[(0, 30), (255, 255)]), line.clone()] };
+        let b = write(&c);
+        assert_eq!(
+            parse(&b[0].0, &b[0].1, None, Channels::Cmyk),
+            Adjustment::Curves { master: master.clone(), per_channel: [line.clone(), line.clone(), line.clone()] }
+        );
+        let lab = Adjustment::Curves { master: line.clone(), per_channel: [master.clone(), line.clone(), line.clone()] };
+        let b = write(&lab);
+        assert_eq!(parse(&b[0].0, &b[0].1, None, Channels::Lab), Adjustment::Curves { master, per_channel: [line.clone(), line.clone(), line] });
+        let l = Adjustment::Levels { master: lc(0, 255), per_channel: [lc(0, 255), lc(5, 250), lc(0, 255)] };
+        let b = write(&l);
+        assert_eq!(parse(&b[0].0, &b[0].1, None, Channels::Cmyk), Adjustment::Levels { master: lc(0, 255), per_channel: Default::default() });
         rt(Adjustment::Unsupported { psd_key: "selc".into(), raw: vec![1, 2, 3] });
         rt(Adjustment::GradientMap { stops: vec![(0.0, [0.0, 0.0, 0.0]), (0.5, [1.0, 0.0, 0.0]), (1.0, [1.0, 1.0, 1.0])], reverse: true, dither: false });
         rt(Adjustment::GradientMap { stops: vec![(0.0, [0.0, 0.0, 0.0]), (1.0, [1.0, 1.0, 1.0])], reverse: false, dither: true });
@@ -1040,12 +1021,7 @@ mod tests {
     #[test]
     fn non_rgb_ignores_channel_records() {
         let lc = LevelsChannel { in_black: 0.1, ..Default::default() };
-        let a = Adjustment::Levels {
-            master: LevelsChannel::default(),
-            per_channel: [lc.clone(), lc.clone(), lc],
-            space: ToneSpace::Rgb,
-            black: LevelsChannel::default(),
-        };
+        let a = Adjustment::Levels { master: LevelsChannel::default(), per_channel: [lc.clone(), lc.clone(), lc] };
         let b = write(&a);
         match parse(&b[0].0, &b[0].1, None, Channels::Other) {
             Adjustment::Levels { per_channel, .. } => assert_eq!(per_channel, <[LevelsChannel; 3]>::default()),
@@ -1056,12 +1032,7 @@ mod tests {
     #[test]
     fn gray_uses_first_channel_record_for_all() {
         let lc = LevelsChannel { in_black: 44.0 / 255.0, ..Default::default() };
-        let a = Adjustment::Levels {
-            master: LevelsChannel::default(),
-            per_channel: [lc.clone(), Default::default(), Default::default()],
-            space: ToneSpace::Rgb,
-            black: LevelsChannel::default(),
-        };
+        let a = Adjustment::Levels { master: LevelsChannel::default(), per_channel: [lc.clone(), Default::default(), Default::default()] };
         let b = write(&a);
         match parse(&b[0].0, &b[0].1, None, Channels::Gray) {
             Adjustment::Levels { per_channel, .. } => assert_eq!(per_channel, [lc.clone(), lc.clone(), lc]),

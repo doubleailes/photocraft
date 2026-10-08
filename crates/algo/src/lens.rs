@@ -279,9 +279,7 @@ pub fn remap(src: &Surface, frame: Rect, out_area: Rect, edge: EdgeMode, map: &(
     let n_in = sfmt.channels();
     let n_out = ofmt.channels();
     let cc = sfmt.mode.color_channels();
-    let rgb = matches!(sfmt.mode, ColorMode::Rgb | ColorMode::Indexed) && cc == 3;
-    let subtractive = sfmt.mode == ColorMode::Cmyk;
-    let lab = sfmt.mode == ColorMode::Lab;
+    let rgb = sfmt.mode == ColorMode::Rgb && cc == 3;
     let edge_px: Vec<f32> = match edge {
         EdgeMode::Color(c) => photocraft_raster::from_rgba(&ofmt, c),
         _ => vec![0.0; n_out],
@@ -376,13 +374,7 @@ pub fn remap(src: &Surface, frame: Rect, out_area: Rect, edge: EdgeMode, map: &(
                 let pm = bicubic(c, p);
                 let straight = if sfmt.alpha { if alpha > 1e-6 { pm / alpha } else { 0.0 } } else { pm };
                 let g = s.gain;
-                *v = if subtractive {
-                    1.0 - (1.0 - straight) * g
-                } else if lab {
-                    if c == 0 { straight * g } else { straight }
-                } else {
-                    straight * g
-                };
+                *v = straight * g;
                 if !sfmt.sample.is_float() {
                     *v = v.clamp(0.0, 1.0);
                 }
@@ -514,11 +506,11 @@ mod tests {
         assert!(wide.k1 < -0.05 && tele.k1 > 0.0 && wide.vignette[0] < tele.vignette[0]);
         let mid = generic_profile(30.0);
         assert!(mid.k1 < -0.025 && mid.k1 > -0.06);
-        // CMYK vignette lightening reduces ink.
-        let fmt = PixelFormat::new(ColorMode::Cmyk, SampleType::U8, false);
+        // Vignette lightening brightens the corners of a gray image.
+        let fmt = PixelFormat::new(ColorMode::Grayscale, SampleType::F16, false);
         let mut s = Surface::new(fmt);
-        s.fill_rect(Rect::new(0, 0, 40, 40), &[0.5, 0.5, 0.5, 0.5]);
+        s.fill_rect(Rect::new(0, 0, 40, 40), &[0.5]);
         let out = correct(&s, Rect::new(0, 0, 40, 40), &LensCorrection { vignette_amount: 100.0, edge: EdgeMode::Extension, ..Default::default() });
-        assert!(out.pixel(0, 0)[0] < 0.4 && (out.pixel(20, 20)[0] - 0.5).abs() < 0.02, "{:?}", out.pixel(0, 0));
+        assert!(out.pixel(0, 0)[0] > 0.6 && (out.pixel(20, 20)[0] - 0.5).abs() < 0.02, "{:?}", out.pixel(0, 0));
     }
 }

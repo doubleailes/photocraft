@@ -612,8 +612,8 @@ fn chunked_rendering_matches_one_shot() {
 #[test]
 fn paints_every_depth_and_model() {
     let b = BrushSettings { size: 8.0, color: [1.0, 0.0, 0.0, 1.0], ..brush() };
-    for mode in [ColorMode::Rgb, ColorMode::Grayscale, ColorMode::Cmyk] {
-        for sample in [SampleType::U8, SampleType::U16, SampleType::F32] {
+    for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
+        for sample in SampleType::ALL {
             for alpha in [true, false] {
                 let fmt = PixelFormat::new(mode, sample, alpha);
                 let mut s = Surface::with_default(fmt, &photocraft_raster::from_rgba(&fmt, [1.0, 1.0, 1.0, 1.0]));

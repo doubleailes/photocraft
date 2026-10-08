@@ -3,8 +3,7 @@
 //! (an 8-bit transform of the composite).
 //!
 //! * The composite is in [`composite_profile`] (the document profile for RGB, its gray curve as
-//!   RGB for gray documents, sRGB for CMYK — read through the document's CMYK profile, see
-//!   `photocraft_color::convert::CmykSpace` — and Lab).
+//!   RGB for gray documents).
 //! * Linear composites (EXR/HDR, linear profiles) are stored in the 8-bit canvas texture
 //!   sRGB-encoded ([`CanvasDisplay::encode_srgb`]) so shadows keep their precision; the display
 //!   source profile is then the same primaries with the sRGB curve.

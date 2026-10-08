@@ -1,13 +1,12 @@
 //! Histograms for the tone editors (Levels, Curves, Threshold) and the Histogram panel.
 //!
 //! The adjustment editors themselves live in `adjust_editors`; this module computes and caches
-//! the histograms they draw behind their controls, in the channels of the adjustment's space
-//! (RGB, CMYK ink brightness, Lab), and draws them.
+//! the histograms they draw behind their controls (the composite and red, green, blue), and
+//! draws them.
 
 use std::sync::Arc;
 
 use egui::{Color32, Rect, Sense, vec2};
-use photocraft_doc::adjust::ToneSpace;
 use photocraft_doc::{Document, Layer, LayerId};
 
 use crate::PhotocraftApp;
@@ -17,9 +16,8 @@ const CHANNELS: [(&str, &str); 4] = [("rgb", "RGB"), ("red", "Red"), ("green", "
 
 static EMPTY: [u32; 256] = [0; 256];
 
-/// 256-bin histograms: the composite then one per channel of the space (RGB: luminosity, R, G, B;
-/// CMYK: composite, C, M, Y, K as channel brightness; Lab: L, a, b). `tag` identifies what they
-/// were computed from (see [`HistSource`]).
+/// 256-bin histograms: the composite (luminosity) then red, green and blue. `tag` identifies what
+/// they were computed from (see [`HistSource`]).
 #[derive(Clone, Debug, Default)]
 pub struct Histograms {
     pub tag: u64,
@@ -42,17 +40,12 @@ pub enum HistSource {
     Layer(LayerId),
 }
 
-fn tag(source: HistSource, space: ToneSpace) -> u64 {
+fn tag(source: HistSource) -> u64 {
     let (k, id) = match source {
         HistSource::BelowLayer(l) => (1u64, l.0),
         HistSource::Layer(l) => (2, l.0),
     };
-    let s = match space {
-        ToneSpace::Rgb => 0u64,
-        ToneSpace::Cmyk => 1,
-        ToneSpace::Lab => 2,
-    };
-    id.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (k << 60) ^ (s << 56)
+    id.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ (k << 60)
 }
 
 /// Shows only the branch of the layer tree holding `id`. Returns whether `id` is in `layers`.
@@ -66,8 +59,8 @@ fn isolate(layers: &mut [Layer], id: LayerId) -> bool {
     found
 }
 
-/// Histograms of `doc` as seen by `source`, in the channels of `space`.
-pub fn compute_histograms(doc: &Document, source: HistSource, space: ToneSpace) -> Histograms {
+/// Histograms of `doc` as seen by `source`.
+pub fn compute_histograms(doc: &Document, source: HistSource) -> Histograms {
     let mut d = doc.clone();
     match source {
         HistSource::BelowLayer(hide) => {
@@ -80,50 +73,25 @@ pub fn compute_histograms(doc: &Document, source: HistSource, space: ToneSpace) 
         }
     }
     let img = photocraft_compose::thumbnail(&d, 384);
-    let n = match space {
-        ToneSpace::Rgb => 4,
-        ToneSpace::Cmyk => 5,
-        ToneSpace::Lab => 3,
-    };
-    let mut h = vec![[0u32; 256]; n];
-    let bin = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as usize;
+    let mut h = vec![[0u32; 256]; 4];
     for p in img.pixels.as_chunks::<4>().0 {
         if p[3] == 0 {
             continue;
         }
-        match space {
-            ToneSpace::Rgb => {
-                for c in 0..3 {
-                    h[c + 1][p[c] as usize] += 1;
-                }
-                h[0][((p[0] as u32 + p[1] as u32 + p[2] as u32) / 3) as usize] += 1;
-            }
-            ToneSpace::Cmyk => {
-                let rgb = [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0);
-                let ink = photocraft_color::convert::rgb_to_cmyk(rgb);
-                for (c, v) in ink.iter().enumerate() {
-                    h[c + 1][bin(1.0 - v)] += 1;
-                }
-                h[0][bin(1.0 - ink.iter().sum::<f32>() / 4.0)] += 1;
-            }
-            ToneSpace::Lab => {
-                let rgb = [p[0], p[1], p[2]].map(|v| f32::from(v) / 255.0);
-                let l = photocraft_color::convert::srgb_to_lab(rgb);
-                h[0][bin(l[0] / 100.0)] += 1;
-                h[1][bin((l[1] + 128.0) / 255.0)] += 1;
-                h[2][bin((l[2] + 128.0) / 255.0)] += 1;
-            }
+        for c in 0..3 {
+            h[c + 1][p[c] as usize] += 1;
         }
+        h[0][((p[0] as u32 + p[1] as u32 + p[2] as u32) / 3) as usize] += 1;
     }
-    Histograms { tag: tag(source, space), ch: h }
+    Histograms { tag: tag(source), ch: h }
 }
 
 /// Cached histograms for a tone editor; recomputed only when something other than the editor's
 /// own commits changed the document (see [`keep_after_commit`]).
-pub fn histograms(app: &mut PhotocraftApp, source: HistSource, space: ToneSpace) -> Arc<Histograms> {
+pub fn histograms(app: &mut PhotocraftApp, source: HistSource) -> Arc<Histograms> {
     let Some(st) = app.session.active() else { return Arc::new(Histograms::default()) };
     let (doc_id, rev) = (st.doc.id, st.revision);
-    let want = tag(source, space);
+    let want = tag(source);
     let layer = match source {
         HistSource::BelowLayer(l) | HistSource::Layer(l) => l,
     };
@@ -138,7 +106,7 @@ pub fn histograms(app: &mut PhotocraftApp, source: HistSource, space: ToneSpace)
         return h.clone();
     }
     let t0 = crate::gpu_canvas::now_ms();
-    let h = Arc::new(compute_histograms(&st.doc, source, space));
+    let h = Arc::new(compute_histograms(&st.doc, source));
     app.perf.span("histogram", crate::gpu_canvas::now_ms() - t0);
     app.tone_hist = Some((doc_id, layer, rev, h.clone()));
     h
@@ -239,7 +207,7 @@ pub fn histogram_panel(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let due = app.doc_hist.as_ref().is_none_or(|(d, _, at, _)| *d != doc_id || now - at > 250.0);
     if stale && due {
         let t0 = now;
-        let h = Arc::new(compute_histograms(&st.doc, HistSource::BelowLayer(LayerId(u64::MAX)), ToneSpace::Rgb));
+        let h = Arc::new(compute_histograms(&st.doc, HistSource::BelowLayer(LayerId(u64::MAX))));
         app.perf.span("histogram", crate::gpu_canvas::now_ms() - t0);
         app.doc_hist = Some((doc_id, rev, now, h));
     } else if stale {
@@ -299,13 +267,13 @@ mod tests {
         s.execute("file.new", json!({"width": 64, "height": 64})).unwrap(); // white
         s.execute("layer.newAdjustmentLayer.invert", json!({})).unwrap();
         let st = s.active().unwrap();
-        let h = compute_histograms(&st.doc, HistSource::BelowLayer(st.active_layer.unwrap()), ToneSpace::Rgb);
+        let h = compute_histograms(&st.doc, HistSource::BelowLayer(st.active_layer.unwrap()));
         assert!(h[0][255] > 0 && h[0][0] == 0, "sees the white image, not the inverted result");
         assert_eq!(h[9], [0; 256], "out-of-range channels are empty, not a panic");
     }
 
     #[test]
-    fn layer_histogram_sees_only_that_layer_and_spaces_have_their_channels() {
+    fn layer_histogram_sees_only_that_layer() {
         let mut s = photocraft_engine::Session::new();
         s.execute("file.new", json!({"width": 32, "height": 32})).unwrap(); // white background
         let bg = s.active().unwrap().doc.layers[0].id;
@@ -313,9 +281,8 @@ mod tests {
         s.execute("select.rect", json!({"x": 0, "y": 0, "width": 32, "height": 32})).unwrap();
         s.execute("edit.fill", json!({"color": "#000000"})).unwrap();
         let st = s.active().unwrap();
-        let h = compute_histograms(&st.doc, HistSource::Layer(bg), ToneSpace::Rgb);
+        let h = compute_histograms(&st.doc, HistSource::Layer(bg));
         assert!(h[0][255] > 0 && h[0][0] == 0, "the black layer above is hidden");
-        assert_eq!(compute_histograms(&st.doc, HistSource::Layer(bg), ToneSpace::Cmyk).ch.len(), 5);
-        assert_eq!(compute_histograms(&st.doc, HistSource::Layer(bg), ToneSpace::Lab).ch.len(), 3);
+        assert_eq!(h.ch.len(), 4);
     }
 }

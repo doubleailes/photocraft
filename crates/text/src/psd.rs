@@ -363,7 +363,11 @@ pub(crate) fn char_style(base: Option<&E>, d: &E, fonts: &[String], k: f32) -> C
         let v = arr_f(c.get("Values"));
         let a = v.first().copied().unwrap_or(1.0) as f32;
         s.color = match v.len() {
-            5 => Color { mode: ColorMode::Cmyk, c: [v[1] as f32, v[2] as f32, v[3] as f32, v[4] as f32], alpha: a },
+            // CMYK type colours (from CMYK files) become RGB through the built-in CMYK profile.
+            5 => {
+                let [r, g, b] = photocraft_color::convert::cmyk_to_rgb([v[1] as f32, v[2] as f32, v[3] as f32, v[4] as f32]);
+                Color::rgba(r, g, b, a)
+            }
             2 => Color { mode: ColorMode::Grayscale, c: [v[1] as f32, 0.0, 0.0, 0.0], alpha: a },
             4 => Color::rgba(v[1] as f32, v[2] as f32, v[3] as f32, a),
             _ => Color::BLACK,
@@ -552,17 +556,15 @@ pub const OPENTYPE_KEYS: [(&str, &str); 8] = [
 pub(crate) fn style_sheet_data(s: &CharStyle, font: usize, k: f32) -> E {
     let c = &s.color;
     let values = match c.mode {
-        ColorMode::Cmyk => vec![real(c.alpha), real(c.c[0]), real(c.c[1]), real(c.c[2]), real(c.c[3])],
         ColorMode::Grayscale => vec![real(c.alpha), real(c.c[0])],
-        _ => {
+        ColorMode::Rgb => {
             let [r, g, b] = c.to_rgb();
             vec![real(c.alpha), real(r), real(g), real(b)]
         }
     };
     let color_type = match c.mode {
-        ColorMode::Cmyk => 2,
         ColorMode::Grayscale => 0,
-        _ => 1,
+        ColorMode::Rgb => 1,
     };
     let mut opentype: Vec<(String, E)> = OPENTYPE_KEYS
         .iter()

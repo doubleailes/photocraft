@@ -291,18 +291,7 @@ pub fn body(ui: &mut egui::Ui, f: &mut Map<String, Value>) {
             small_label(ui, tl!("Color Mode"));
             ui.horizontal(|ui| {
                 let mut mode = get_s(f, "mode", "rgb");
-                if widgets::dropdown(
-                    ui,
-                    "nd-mode",
-                    &mut mode,
-                    &[
-                        ("gray".to_string(), tl!("Grayscale")),
-                        ("rgb".to_string(), tl!("RGB Color")),
-                        ("cmyk".to_string(), tl!("CMYK Color")),
-                        ("lab".to_string(), tl!("Lab Color")),
-                    ],
-                    110.0,
-                ) {
+                if widgets::dropdown(ui, "nd-mode", &mut mode, &[("gray".to_string(), tl!("Grayscale")), ("rgb".to_string(), tl!("RGB Color"))], 110.0) {
                     f.insert("mode".into(), json!(mode));
                 }
                 let options = depth_options(&get_s(f, "mode", "rgb"));

@@ -71,5 +71,5 @@ fn main() {
     run(rgba8, "RGBA8 Chalk (sampled) 200px", &BrushSettings { size: 200.0, ..chalk });
     run(rgba8.with_sample(SampleType::U16), "RGBA16 textured+scattered", &brush);
     run(PixelFormat::RGBA32F, "RGBA32F textured+scattered", &brush);
-    run(PixelFormat::CMYKA8, "CMYKA8 textured+scattered", &brush);
+    run(PixelFormat::RGBA16F, "RGBA16F textured+scattered", &brush);
 }

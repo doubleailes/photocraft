@@ -53,29 +53,21 @@ impl SampleType {
     }
 }
 
-/// Document colour model (Photoshop "Image → Mode").
+/// Document colour model. PhotoCraft documents are RGB or grayscale (scene-linear, see
+/// `docs/ocio-migration.md`); files in other models (CMYK, Lab, Indexed, Duotone, Bitmap,
+/// Multichannel) are converted when they are opened.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ColorMode {
-    Bitmap,
     Grayscale,
-    Indexed,
     Rgb,
-    Cmyk,
-    Lab,
-    Multichannel,
-    Duotone,
 }
 
 impl ColorMode {
     /// Number of colour (non-alpha) channels used for pixel storage.
-    /// Indexed and Bitmap documents are stored expanded (RGB / Gray) for editing.
     pub const fn color_channels(self) -> usize {
         match self {
-            ColorMode::Bitmap | ColorMode::Grayscale | ColorMode::Duotone => 1,
-            ColorMode::Indexed | ColorMode::Rgb | ColorMode::Lab => 3,
-            ColorMode::Cmyk => 4,
-            // Multichannel documents carry their channel count separately; default to 3.
-            ColorMode::Multichannel => 3,
+            ColorMode::Grayscale => 1,
+            ColorMode::Rgb => 3,
         }
     }
 }
@@ -95,7 +87,6 @@ impl PixelFormat {
     pub const RGBA32F: PixelFormat = PixelFormat { mode: ColorMode::Rgb, sample: SampleType::F32, alpha: true };
     pub const GRAY8: PixelFormat = PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::U8, alpha: false };
     pub const GRAYA8: PixelFormat = PixelFormat { mode: ColorMode::Grayscale, sample: SampleType::U8, alpha: true };
-    pub const CMYKA8: PixelFormat = PixelFormat { mode: ColorMode::Cmyk, sample: SampleType::U8, alpha: true };
 
     pub const fn new(mode: ColorMode, sample: SampleType, alpha: bool) -> Self {
         Self { mode, sample, alpha }
@@ -181,13 +172,11 @@ impl Color {
     pub const WHITE: Color = Color::rgb(1.0, 1.0, 1.0);
     pub const TRANSPARENT: Color = Color::rgba(0.0, 0.0, 0.0, 0.0);
 
-    /// Convert to sRGB (CMYK through the built-in CMYK profile, Lab via D50 formulas).
+    /// The colour as RGB (gray replicated).
     pub fn to_rgb(&self) -> [f32; 3] {
         match self.mode {
-            ColorMode::Rgb | ColorMode::Indexed | ColorMode::Multichannel => [self.c[0], self.c[1], self.c[2]],
-            ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => [self.c[0]; 3],
-            ColorMode::Cmyk => convert::cmyk_to_rgb([self.c[0], self.c[1], self.c[2], self.c[3]]),
-            ColorMode::Lab => convert::lab_to_srgb([self.c[0] * 100.0, self.c[1] * 255.0 - 128.0, self.c[2] * 255.0 - 128.0]),
+            ColorMode::Rgb => [self.c[0], self.c[1], self.c[2]],
+            ColorMode::Grayscale => [self.c[0]; 3],
         }
     }
 
@@ -208,7 +197,6 @@ mod tests {
         assert_eq!(PixelFormat::RGBA16.bytes_per_pixel(), 8);
         assert_eq!(PixelFormat::RGBA32F.bytes_per_pixel(), 16);
         assert_eq!(PixelFormat::GRAY8.bytes_per_pixel(), 1);
-        assert_eq!(PixelFormat::CMYKA8.channels(), 5);
     }
 
     #[test]
@@ -274,9 +262,8 @@ mod tests {
     fn color_to_rgba8() {
         assert_eq!(Color::WHITE.to_rgba8(), [255, 255, 255, 255]);
         assert_eq!(Color::gray(0.5).to_rgba8(), [128, 128, 128, 255]);
-        let w = Color { mode: ColorMode::Cmyk, c: [0.0; 4], alpha: 1.0 };
-        assert_eq!(w.to_rgba8(), [255, 255, 255, 255]);
-        let k = Color { mode: ColorMode::Cmyk, c: [0.75, 0.68, 0.67, 0.9], alpha: 1.0 };
-        assert!(k.to_rgba8()[..3].iter().all(|v| *v < 20), "{:?}", k.to_rgba8());
+        // CMYK values (from files) convert through the built-in CMYK profile.
+        assert_eq!(convert::cmyk_to_rgb([0.0; 4]).map(|v| (v * 255.0).round() as u8), [255, 255, 255]);
+        assert!(convert::cmyk_to_rgb([0.75, 0.68, 0.67, 0.9]).iter().all(|v| *v < 20.0 / 255.0));
     }
 }

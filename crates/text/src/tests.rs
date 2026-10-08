@@ -221,7 +221,7 @@ fn raster_coverage_scales_and_depths_agree() {
     assert!((3.6..4.4).contains(&ratio), "ink ∝ size²: {ratio}");
     // Placement: anchored at (10, 50) baseline.
     assert!(r12.rect.x0 >= 8 && r12.rect.x0 <= 11 && r12.rect.y1 <= 53 && r12.rect.y1 >= 50, "{:?}", r12.rect);
-    for fmt in [PixelFormat::RGBA16, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::CMYKA8] {
+    for fmt in [PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8] {
         let (_, r) = e.render(&t(12.0), 72.0, fmt);
         assert_eq!(r.rect, r12.rect);
         let s = alpha_sum(&r.surface, r.rect);
@@ -275,9 +275,6 @@ fn multicolor_runs() {
     let opaque: Vec<&[f32; 4]> = px.as_chunks::<4>().0.iter().filter(|p| p[3] > 0.99).collect();
     assert!(opaque.iter().any(|p| p[0] > 0.99 && p[2] < 0.01));
     assert!(opaque.iter().any(|p| p[2] > 0.99 && p[0] < 0.01));
-    // CMYK target keeps colour in the document model.
-    let (_, rc) = e.render(&t, 72.0, PixelFormat::CMYKA8);
-    assert!(rc.surface.read_region(rc.rect).as_chunks::<5>().0.iter().any(|p| p[4] > 0.99 && p[1] > 0.9 && p[2] > 0.9));
 }
 
 #[test]

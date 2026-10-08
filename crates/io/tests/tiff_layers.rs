@@ -66,15 +66,12 @@ rt_case!(rt_rgb32_all, ColorMode::Rgb, SampleType::F32, Features::ALL);
 rt_case!(rt_gray8_all, ColorMode::Grayscale, SampleType::U8, Features::ALL);
 rt_case!(rt_gray16_all, ColorMode::Grayscale, SampleType::U16, Features::ALL);
 rt_case!(rt_gray32_all, ColorMode::Grayscale, SampleType::F32, Features::ALL);
-rt_case!(rt_cmyk8_all, ColorMode::Cmyk, SampleType::U8, Features::ALL);
-rt_case!(rt_cmyk16_all, ColorMode::Cmyk, SampleType::U16, Features::ALL);
 rt_case!(rt_rgb8_pixels, ColorMode::Rgb, SampleType::U8, Features::PIXELS);
 rt_case!(rt_gray16_pixels, ColorMode::Grayscale, SampleType::U16, Features::PIXELS);
-rt_case!(rt_cmyk8_pixels, ColorMode::Cmyk, SampleType::U8, Features::PIXELS);
 
 #[test]
 fn tiff_and_psd_open_as_the_same_document() {
-    for (mode, depth) in [(ColorMode::Rgb, SampleType::U8), (ColorMode::Cmyk, SampleType::U16), (ColorMode::Grayscale, SampleType::F32)] {
+    for (mode, depth) in [(ColorMode::Rgb, SampleType::U8), (ColorMode::Rgb, SampleType::U16), (ColorMode::Grayscale, SampleType::F32)] {
         let d = gen_doc(mode, depth, Features::ALL);
         let psd = export(&d, "x.psd", &ExportOptions::default()).unwrap();
         let from_psd = import("x.psd", &psd.bytes).unwrap().document;
@@ -128,15 +125,6 @@ fn a_plain_background_needs_no_layer_data() {
     assert!(r.warnings.is_empty(), "{:?}", r.warnings);
     let back = import("x.tif", &r.bytes).unwrap().document;
     assert_docs_eq(&d, &back);
-}
-
-#[test]
-fn lab_documents_are_saved_flat_with_a_warning() {
-    let d = gen_doc(ColorMode::Lab, SampleType::U8, Features::PIXELS);
-    let r = tiff(&d, true);
-    assert_eq!(tags(&r.bytes), (None, None));
-    assert!(r.warnings.iter().any(|w| w.contains("Lab") && w.contains("layers are not kept")), "{:?}", r.warnings);
-    assert!(import("x.tif", &r.bytes).is_ok());
 }
 
 #[test]

@@ -33,13 +33,8 @@ rt_case!(rt_rgb32_all, ColorMode::Rgb, SampleType::F32, Features::ALL);
 rt_case!(rt_gray8_all, ColorMode::Grayscale, SampleType::U8, Features::ALL);
 rt_case!(rt_gray16_all, ColorMode::Grayscale, SampleType::U16, Features::ALL);
 rt_case!(rt_gray32_all, ColorMode::Grayscale, SampleType::F32, Features::ALL);
-rt_case!(rt_cmyk8_all, ColorMode::Cmyk, SampleType::U8, Features::ALL);
-rt_case!(rt_cmyk16_all, ColorMode::Cmyk, SampleType::U16, Features::ALL);
-rt_case!(rt_lab8_all, ColorMode::Lab, SampleType::U8, Features::ALL);
-rt_case!(rt_lab16_all, ColorMode::Lab, SampleType::U16, Features::ALL);
 rt_case!(rt_rgb8_pixels, ColorMode::Rgb, SampleType::U8, Features::PIXELS);
 rt_case!(rt_gray16_pixels, ColorMode::Grayscale, SampleType::U16, Features::PIXELS);
-rt_case!(rt_cmyk8_pixels, ColorMode::Cmyk, SampleType::U8, Features::PIXELS);
 
 #[test]
 fn psb_roundtrip() {
@@ -193,8 +188,7 @@ fn edited_adjustment_regenerates_block_unedited_keeps_raw() {
     use std::sync::Arc;
     let mut d = gen_doc(ColorMode::Rgb, SampleType::U8, Features::PIXELS);
     // Levels block with non-default extra records (record 5 changed).
-    let base =
-        Adjustment::Levels { master: adjust::LevelsChannel::default(), per_channel: Default::default(), space: Default::default(), black: Default::default() };
+    let base = Adjustment::Levels { master: adjust::LevelsChannel::default(), per_channel: Default::default() };
     let mut l = Layer::new("lv", LayerContent::Adjustment(base.clone()));
     let psd = document_to_psd(&{
         let mut t = d.clone();

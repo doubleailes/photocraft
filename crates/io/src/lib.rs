@@ -34,6 +34,7 @@ mod flat;
 mod gradient_bake;
 pub mod linked;
 mod multichannel_map;
+mod native;
 pub mod pattern_map;
 mod pixels;
 mod psd_export;
@@ -239,12 +240,8 @@ pub fn merged_composite(file: &PsdFile) -> Result<Vec<[f32; 4]>, IoError> {
             })
             .collect());
     }
-    // Generic path (Lab, CMYK and others) via the raster model conversion.
+    // Generic path (Lab, CMYK, Multichannel and others): the import converts them to RGB.
     let (doc, _) = psd_to_document(&PsdFile { layer_info: None, ..file.clone() });
-    // Multichannel documents keep their channels apart (no layer): composite them.
-    if doc.layers.is_empty() && doc.mode == photocraft_color::ColorMode::Multichannel {
-        return Ok(photocraft_compose::flatten(&doc).px);
-    }
     let l = doc.layers.first().ok_or_else(|| IoError::Unsupported("no merged image".into()))?;
     let s = l.surface().ok_or_else(|| IoError::Unsupported("no merged image".into()))?;
     Ok(photocraft_compose::surface_to_buffer(s, doc.bounds()).px)

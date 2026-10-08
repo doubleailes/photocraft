@@ -351,18 +351,6 @@ fn render_is_tile_independent() {
 }
 
 #[test]
-fn cmyk_document_renders_via_rgb() {
-    let mut d = Document::new("c", Size::new(2, 2), ColorMode::Cmyk, SampleType::U8);
-    let mut l = Layer::raster("k", d.pixel_format());
-    l.surface_mut().unwrap().fill_rect(Rect::new(0, 0, 2, 2), &[0.0, 0.0, 0.0, 1.0, 1.0]);
-    d.layers.push(l);
-    // CMYK displays through the built-in CMYK profile: 100 % K alone is a dark neutral
-    // (as in any real CMYK profile), not pure black.
-    let p = px(&d, 0, 0);
-    assert!(p[0] < 0.3 && (p[0] - p[1]).abs() < 0.05 && (p[1] - p[2]).abs() < 0.05 && p[3] == 1.0, "{p:?}");
-}
-
-#[test]
 fn sixteen_bit_and_float_layers_composite() {
     for fmt in [PixelFormat::RGBA16, PixelFormat::RGBA32F] {
         let mut d = Document::new("x", Size::new(2, 2), ColorMode::Rgb, fmt.sample);
@@ -925,8 +913,6 @@ fn channel_restrictions_keep_the_backdrop() {
     inv.excluded_channels = 0b001;
     d.layers.push(inv);
     assert!(close4(px(&d, 1, 1), [0.2, 0.7, 0.0, 1.0]));
-    // CMYK documents composite in display RGB: no exact equivalent, ignored.
-    assert_eq!(channel_weights(&d.layers[1], ColorMode::Cmyk), None);
     assert_eq!(channel_weights(&d.layers[1], ColorMode::Rgb), Some([1.0, 1.0, 0.0]));
 }
 
@@ -1037,11 +1023,8 @@ fn blend_if_modes() {
     l.blend_if.set(1, [range([10, 10], [255, 255]), FULL]);
     d.layers.push(l);
     assert!(close4(px(&d, 1, 1), [1.0; 4]), "{:?}", px(&d, 1, 1));
-    // CMYK/Lab composite in display RGB: kept for round trip, not applied.
     assert!(blend_if_active(&d.layers[1], ColorMode::Rgb));
     assert!(blend_if_active(&d.layers[1], ColorMode::Grayscale));
-    assert!(!blend_if_active(&d.layers[1], ColorMode::Cmyk));
-    assert!(!blend_if_active(&d.layers[1], ColorMode::Lab));
     assert!(!blend_if_active(&d.layers[0], ColorMode::Rgb));
 }
 
@@ -1145,12 +1128,7 @@ fn levels_matches_photoshop() {
 #[test]
 fn levels_work_on_whole_levels() {
     let ch = LevelsChannel { in_black: 44.0 / 255.0, in_white: 214.0 / 255.0, gamma: 1.78, out_black: 0.0, out_white: 1.0 };
-    let adj = Adjustment::Levels {
-        master: LevelsChannel::default(),
-        per_channel: [ch.clone(), ch.clone(), ch.clone()],
-        space: Default::default(),
-        black: LevelsChannel::default(),
-    };
+    let adj = Adjustment::Levels { master: LevelsChannel::default(), per_channel: [ch.clone(), ch.clone(), ch.clone()] };
     let luts = adjust::tone_luts_q(&adj, Some(255.0));
     let at = |v: u8| {
         let x = f32::from(v) / 255.0 * 4095.0;
@@ -1179,7 +1157,7 @@ fn levels_work_on_whole_levels() {
 #[test]
 fn levels_dont_clip_in_32_bit() {
     let ch = LevelsChannel { in_black: 15.0 / 255.0, in_white: 230.0 / 255.0, gamma: 1.3, out_black: 10.0 / 255.0, out_white: 245.0 / 255.0 };
-    let adj = Adjustment::Levels { master: ch, per_channel: Default::default(), space: Default::default(), black: LevelsChannel::default() };
+    let adj = Adjustment::Levels { master: ch, per_channel: Default::default() };
     let level = |depth, v| {
         let mut b = Buffer::filled(Rect::new(0, 0, 1, 1), [v, v, v, 1.0]);
         adjust::apply_depth(&adj, &mut b, adjust::Transfer::Srgb, Some(depth));

@@ -11,7 +11,7 @@ use crate::state::CurvesEditorState as CurveUi;
 use std::sync::Arc;
 
 use egui::{Color32, Pos2, Rect, RichText, Sense, Stroke, StrokeKind, pos2, vec2};
-use photocraft_doc::adjust::{HueRange, ToneSpace};
+use photocraft_doc::adjust::HueRange;
 use photocraft_doc::{Adjustment, LayerId};
 use photocraft_engine::adjust_params::{self, HUE_RANGES, PHOTO_FILTERS};
 use serde_json::{Value, json};
@@ -73,23 +73,12 @@ impl Edit {
 pub struct EditorCx {
     /// Root of the editor's view state in egui memory (selected channel, point, range…).
     pub mem: egui::Id,
-    /// Histograms in the adjustment's space ([`needs_histogram`] kinds).
+    /// Histograms of the image the adjustment sees ([`needs_histogram`] kinds).
     pub hist: Option<Arc<Histograms>>,
-    /// Grayscale (or Duotone/Bitmap) document: one Gray channel.
+    /// Grayscale document: one Gray channel.
     pub gray: bool,
     /// Current foreground and background colours (Gradient Map preset).
     pub swatches: [[f32; 3]; 2],
-}
-
-/// The Levels/Curves channel space the values address.
-pub fn space_of(v: &Value) -> ToneSpace {
-    if v.get("cyan").is_some() || v.get("black").is_some() {
-        ToneSpace::Cmyk
-    } else if v.get("a").is_some() {
-        ToneSpace::Lab
-    } else {
-        ToneSpace::Rgb
-    }
 }
 
 /// The editor for `kind` over its parameter set `v`.
@@ -227,8 +216,8 @@ pub struct ToneChannel {
     pub label: &'static str,
 }
 
-/// The channels a tone editor lists for `space` (histogram index = position).
-pub fn tone_channels(space: ToneSpace, gray: bool) -> &'static [ToneChannel] {
+/// The channels a tone editor lists (histogram index = position).
+pub fn tone_channels(gray: bool) -> &'static [ToneChannel] {
     const RGB: [ToneChannel; 4] = [
         ToneChannel { key: "", label: "RGB" },
         ToneChannel { key: "red", label: "Red" },
@@ -236,21 +225,7 @@ pub fn tone_channels(space: ToneSpace, gray: bool) -> &'static [ToneChannel] {
         ToneChannel { key: "blue", label: "Blue" },
     ];
     const GRAY: [ToneChannel; 1] = [ToneChannel { key: "", label: "Gray" }];
-    const CMYK: [ToneChannel; 5] = [
-        ToneChannel { key: "", label: "CMYK" },
-        ToneChannel { key: "cyan", label: "Cyan" },
-        ToneChannel { key: "magenta", label: "Magenta" },
-        ToneChannel { key: "yellow", label: "Yellow" },
-        ToneChannel { key: "black", label: "Black" },
-    ];
-    const LAB: [ToneChannel; 3] =
-        [ToneChannel { key: "lightness", label: "Lightness" }, ToneChannel { key: "a", label: "a" }, ToneChannel { key: "b", label: "b" }];
-    match space {
-        ToneSpace::Rgb if gray => &GRAY,
-        ToneSpace::Rgb => &RGB,
-        ToneSpace::Cmyk => &CMYK,
-        ToneSpace::Lab => &LAB,
-    }
+    if gray { &GRAY } else { &RGB }
 }
 
 fn channel_picker(ui: &mut egui::Ui, id: egui::Id, chans: &[ToneChannel], text: &str) -> usize {
@@ -333,8 +308,7 @@ fn curve_key(ch: &ToneChannel) -> &'static str {
 
 fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     let t = Tokens::get(ui.ctx());
-    let space = space_of(v);
-    let chans = tone_channels(space, cx.gray);
+    let chans = tone_channels(cx.gray);
     let state_id = cx.mem.with("curves");
     let mut st: CurveUi = ui.data(|d| d.get_temp(state_id)).unwrap_or_default();
     let ch = channel_picker(ui, cx.mem.with("curves-ch"), chans, tl!("Channel:"));
@@ -440,12 +414,6 @@ fn curves(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     ui.data_mut(|d| d.insert_temp(state_id, st));
     if changed {
         v[key] = json!(pts.iter().map(|q| [q[0].round(), q[1].round()]).collect::<Vec<_>>());
-        if space == ToneSpace::Lab {
-            // Lab has no composite: "points" would alias lightness.
-            if let Some(o) = v.as_object_mut() {
-                o.remove("points");
-            }
-        }
         e.changed = true;
     }
     e
@@ -512,7 +480,7 @@ fn nearest(xs: &[f32], x: f32) -> Option<u8> {
 
 fn levels(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
     let t = Tokens::get(ui.ctx());
-    let chans = tone_channels(space_of(v), cx.gray);
+    let chans = tone_channels(cx.gray);
     let mut ch = 0;
     let mut auto = false;
     ui.horizontal(|ui| {
@@ -1178,7 +1146,7 @@ fn gradient_map(ui: &mut egui::Ui, v: &mut Value, cx: &EditorCx) -> Edit {
 
 /// Whether a document of this mode edits Levels/Curves through a single Gray channel.
 pub fn is_gray(mode: photocraft_doc::ColorMode) -> bool {
-    matches!(mode, photocraft_doc::ColorMode::Grayscale | photocraft_doc::ColorMode::Duotone | photocraft_doc::ColorMode::Bitmap)
+    mode == photocraft_doc::ColorMode::Grayscale
 }
 
 pub fn swatches(app: &PhotocraftApp) -> [[f32; 3]; 2] {
@@ -1210,7 +1178,7 @@ pub fn layer_editor(app: &mut PhotocraftApp, ui: &mut egui::Ui, id: LayerId, adj
         _ => committed.clone(),
     };
     let gray = app.session.active().is_some_and(|s| is_gray(s.doc.mode));
-    let hist = needs_histogram(kind).then(|| tone::histograms(app, HistSource::BelowLayer(id), space_of(&values)));
+    let hist = needs_histogram(kind).then(|| tone::histograms(app, HistSource::BelowLayer(id)));
     let cx = EditorCx { mem: egui::Id::new(("adjust-layer", id.0)), hist, gray, swatches: swatches(app) };
     let e = editor(ui, kind, &mut values, &cx);
     if e.changed {

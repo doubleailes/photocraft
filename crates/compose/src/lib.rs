@@ -22,7 +22,6 @@ pub mod effects;
 pub mod fill_layout;
 pub mod gradient_fill;
 pub mod masks;
-pub mod multichannel;
 pub mod pattern;
 pub mod proxy;
 pub mod psblend;
@@ -93,39 +92,20 @@ pub fn render_tiled(doc: &Document, rect: Rect, tile: i32) -> Buffer {
 
 fn render_tiled_with(doc: &Document, rect: Rect, tile: i32, cx: &Ctx) -> Buffer {
     let tile = tile.max(1);
-    // Lab documents mix Normal blending in CIELAB, as Photoshop does (psblend::LAB_MIX).
-    let lab = doc.mode == photocraft_color::ColorMode::Lab;
-    // CMYK layers are read through the document's own CMYK profile (thread-local scope).
-    let cmyk = cmyk_space(doc);
-    let cmyk = cmyk.as_ref();
     if rect.is_empty() {
         return Buffer::transparent(rect);
     }
     if rect.width() as i32 <= tile && rect.height() as i32 <= tile {
-        return photocraft_color::convert::with_cmyk_space(cmyk, || {
-            let mut buf = multichannel::backdrop(doc, rect);
-            psblend::LAB_MIX.with(|l| l.set(lab));
-            composite_stack(&doc.layers, &mut buf, cx);
-            psblend::LAB_MIX.with(|l| l.set(false));
-            buf
-        });
+        let mut buf = Buffer::transparent(rect);
+        composite_stack(&doc.layers, &mut buf, cx);
+        return buf;
     }
     // Effect maps are built once, here, before any tile needs them (#276).
-    prepare_effects(&doc.layers, rect, cx, |f| {
-        photocraft_color::convert::with_cmyk_space(cmyk, || {
-            psblend::LAB_MIX.with(|l| l.set(lab));
-            f();
-            psblend::LAB_MIX.with(|l| l.set(false));
-        });
-    });
+    prepare_effects(&doc.layers, rect, cx);
     let run = |t: Rect| {
-        photocraft_color::convert::with_cmyk_space(cmyk, || {
-            let mut b = multichannel::backdrop(doc, t);
-            psblend::LAB_MIX.with(|l| l.set(lab));
-            composite_stack(&doc.layers, &mut b, cx);
-            psblend::LAB_MIX.with(|l| l.set(false));
-            b
-        })
+        let mut b = Buffer::transparent(t);
+        composite_stack(&doc.layers, &mut b, cx);
+        b
     };
     // Tiles are written straight into the output, one row of tiles (a band) at a time, so the
     // peak is the output plus the tiles in flight, not a second full-size copy.
@@ -181,16 +161,6 @@ fn render_tiled_with(doc: &Document, rect: Rect, tile: i32, cx: &Ctx) -> Buffer 
         }
     }
     out
-}
-
-/// The document's own CMYK profile for reading its CMYK pixels (`None`: not a CMYK document,
-/// untagged, or the built-in coated CMYK). Enter it with `photocraft_color::convert::with_cmyk_space`
-/// around code that converts the document's CMYK pixels or colours to RGB.
-pub fn cmyk_space(doc: &Document) -> Option<std::sync::Arc<photocraft_color::convert::CmykSpace>> {
-    if doc.mode != photocraft_color::ColorMode::Cmyk {
-        return None;
-    }
-    photocraft_color::convert::CmykSpace::for_profile(doc.icc_profile.as_ref())
 }
 
 /// Pixels per band of [`render_bands`] (a 14000 px wide band is ~600 rows, ~130 MB of f32).
@@ -460,17 +430,14 @@ impl<'a> Ctx<'a> {
 const PREPARE_DEPTH: u32 = 64;
 
 /// Build the effect maps of every visible layer in `layers` (groups included) that can reach
-/// `rect` before tiles render in parallel, layers concurrently on native targets, each build
-/// inside `setting` (the tiles' thread-local colour setting). Tiles then only read finished maps:
+/// `rect` before tiles render in parallel, layers concurrently on native targets. Tiles then only read finished maps:
 /// none builds one while others need it (#276), and none duplicates another's build. Builds never
 /// wait on each other (`cached_effect_maps`), so building them in parallel can't deadlock.
-fn prepare_effects(layers: &[Layer], rect: Rect, cx: &Ctx, setting: impl Fn(&mut dyn FnMut()) + Sync) {
+fn prepare_effects(layers: &[Layer], rect: Rect, cx: &Ctx) {
     let mut todo = Vec::new();
     effect_layers(layers, rect, 0, &mut todo);
     let build = |l: &&Layer| {
-        setting(&mut || {
-            let _ = effect_maps(l, cx);
-        });
+        let _ = effect_maps(l, cx);
     };
     #[cfg(not(target_arch = "wasm32"))]
     if todo.len() > 1 {
@@ -818,8 +785,7 @@ pub fn channel_weights(layer: &Layer, mode: photocraft_color::ColorMode) -> Opti
     let keep = |bit: u32| if x & (1 << bit) != 0 { 0.0 } else { 1.0 };
     match mode {
         M::Rgb => Some([keep(0), keep(1), keep(2)]),
-        M::Grayscale | M::Duotone => Some([keep(0); 3]),
-        _ => None,
+        M::Grayscale => Some([keep(0); 3]),
     }
     .filter(|w| w != &[1.0; 3])
 }
@@ -927,12 +893,9 @@ pub fn occludes_below(layer: &Layer, mode: photocraft_color::ColorMode) -> bool 
 }
 
 /// Whether Blending Options › Blend If changes how `layer` composites in a `mode` document.
-/// RGB documents test Gray and R, G, B; grayscale (and duotone) documents their one channel.
-/// Other modes composite in display RGB, where ranges over their own channels have no exact
-/// equivalent, so (like channel restrictions) the setting round-trips but isn't applied there.
-pub fn blend_if_active(layer: &Layer, mode: photocraft_color::ColorMode) -> bool {
-    use photocraft_color::ColorMode as M;
-    matches!(mode, M::Rgb | M::Grayscale | M::Duotone) && !layer.blend_if.is_default()
+/// RGB documents test Gray and R, G, B; grayscale documents their one channel.
+pub fn blend_if_active(layer: &Layer, _mode: photocraft_color::ColorMode) -> bool {
+    !layer.blend_if.is_default()
 }
 
 /// How much of a pixel shows through `layer`'s Blend If ranges, given the layer's own colour

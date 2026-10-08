@@ -204,61 +204,54 @@ pub fn print_pdf(page: &PrintPage) -> Vec<u8> {
 
 // ---------- Print ----------
 
-/// The flattened, colour-handled document as 8-bit samples in its print colour space.
+/// The flattened, colour-handled document as 8-bit samples in its print colour space: the
+/// document's (encoded) RGB or gray, or the printer profile's space (CMYK too) when PhotoCraft
+/// manages colours.
 fn print_image(doc: &Document, p: &Value, cmd: &str) -> Result<(PrintImage, Value)> {
-    let mut t = Session::new();
     let mut doc = doc.clone();
     // 8-bit print data holds encoded values: a linear document prints as untagged sRGB / sGray.
     if let Some(default) = photocraft_cms::builtin::default_for(crate::color_cmds::mode_space(doc.mode)).filter(|_| crate::linear_doc::is_linear(&doc)) {
         crate::linear_doc::to_encoded(&mut doc, default)?;
         doc.icc_profile = None;
     }
-    let doc = &doc;
-    t.add_document(doc.clone(), None);
+    let gray = doc.mode == ColorMode::Grayscale;
+    let cc = if gray { 1 } else { 3 };
+    // The composite over white is the print image (no layer flatten).
+    let buf = photocraft_compose::flatten(&doc).over_background([1.0, 1.0, 1.0]);
+    let vals: Vec<f32> = buf.px.iter().flat_map(|p| p[..cc].to_vec()).collect();
+    let to8 = |v: &f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     let handling = p.get("colorHandling").and_then(Value::as_str).unwrap_or("printerManages");
     let mut info = json!({"colorHandling": handling});
-    if !matches!(doc.mode, ColorMode::Rgb | ColorMode::Grayscale | ColorMode::Cmyk) {
-        t.execute("image.mode.rgb", json!({}))?;
-    }
+    let (width, height) = (doc.size.width, doc.size.height);
     match handling {
         "photocraftManages" | "photoshopManages" => {
             let profile = p.get("printerProfile").and_then(Value::as_str).ok_or_else(|| bad(cmd, "\"photocraftManages\" needs a \"printerProfile\""))?;
-            let intent = p.get("intent").and_then(Value::as_str).unwrap_or("relative");
+            let intent_name = p.get("intent").and_then(Value::as_str).unwrap_or("relative");
+            let intent = photocraft_cms::Intent::parse(intent_name)
+                .ok_or_else(|| bad(cmd, format!("unknown intent `{intent_name}` (perceptual|relative|saturation|absolute)")))?;
             let bpc = p.get("bpc").and_then(Value::as_bool).unwrap_or(true);
-            t.execute("edit.convertToProfile", json!({"profile": profile, "intent": intent, "bpc": bpc}))?;
+            let dst = crate::color_cmds::resolve_profile(profile, Some(&doc), None)?;
+            let src = crate::color_cmds::document_profile(&doc);
+            let t = photocraft_cms::Transform::new(&src, &dst, intent, bpc).map_err(|e| other(format!("printer profile: {e}")))?;
+            let k = t.outputs();
+            if t.inputs() != cc || !(1..=4).contains(&k) {
+                return Err(bad(cmd, format!("printer profile `{}` can't print this document", dst.description)));
+            }
+            let mut out = vec![0.0f32; vals.len() / cc * k];
+            t.convert_f32(&vals, cc, &mut out, k, false);
             info["printerProfile"] = json!(profile);
-            info["intent"] = json!(intent);
+            info["intent"] = json!(intent.id());
             info["bpc"] = json!(bpc);
+            let data = out.iter().map(to8).collect();
+            Ok((PrintImage { width, height, channels: k, data, icc: Some(dst.to_bytes().to_vec()) }, info))
         }
-        "printerManages" | "noColorManagement" => {}
-        "separations" => return Err(bad(cmd, "Separations printing is not supported; use photocraftManages with a CMYK printer profile")),
-        h => return Err(bad(cmd, format!("unknown colorHandling `{h}` (printerManages|photocraftManages|noColorManagement)"))),
-    }
-    let d = &t.active().ok_or(EngineError::NoDocument)?.doc;
-    let icc = if handling == "noColorManagement" { None } else { d.icc_profile.as_ref().map(|v| v.to_vec()) };
-    // RGB and Grayscale: the composite over white is the print image (no layer flatten).
-    if matches!(d.mode, ColorMode::Rgb | ColorMode::Grayscale) {
-        let gray = d.mode == ColorMode::Grayscale;
-        let buf = photocraft_compose::flatten(d).over_background([1.0, 1.0, 1.0]);
-        let to8 = |v: f32| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
-        let data: Vec<u8> =
-            if gray { buf.px.iter().map(|p| to8(p[0])).collect() } else { buf.px.iter().flat_map(|p| [to8(p[0]), to8(p[1]), to8(p[2])]).collect() };
-        return Ok((PrintImage { width: d.size.width, height: d.size.height, channels: if gray { 1 } else { 3 }, data, icc }, info));
-    }
-    t.execute("layer.flattenImage", json!({}))?;
-    let d = &t.active().ok_or(EngineError::NoDocument)?.doc;
-    let fmt = d.pixel_format();
-    let k = fmt.mode.color_channels();
-    let n = fmt.channels();
-    let surf = d.layers.first().and_then(|l| l.surface()).ok_or_else(|| other("nothing to print"))?;
-    let vals = surf.read_region(d.bounds());
-    let mut data = Vec::with_capacity(vals.len() / n * k);
-    for px in vals.chunks_exact(n) {
-        for v in &px[..k] {
-            data.push((v.clamp(0.0, 1.0) * 255.0).round() as u8);
+        "printerManages" | "noColorManagement" => {
+            let icc = if handling == "noColorManagement" { None } else { doc.icc_profile.as_ref().map(|v| v.to_vec()) };
+            Ok((PrintImage { width, height, channels: cc, data: vals.iter().map(to8).collect(), icc }, info))
         }
+        "separations" => Err(bad(cmd, "Separations printing is not supported; use photocraftManages with a CMYK printer profile")),
+        h => Err(bad(cmd, format!("unknown colorHandling `{h}` (printerManages|photocraftManages|noColorManagement)"))),
     }
-    Ok((PrintImage { width: d.size.width, height: d.size.height, channels: k, data, icc }, info))
 }
 
 fn paper(p: &Value, cmd: &str) -> Result<(f64, f64)> {

@@ -435,7 +435,7 @@ fn contact_sheet(s: &mut Session, p: &Value) -> Result<Value> {
     let font_pt = f("fontSize", 12.0);
     let flatten = p.get("flatten").and_then(Value::as_bool).unwrap_or(false);
     let mode = p.get("mode").and_then(Value::as_str).unwrap_or("rgb").to_string();
-    let depth = crate::commands::int(p, "depth").unwrap_or(8);
+    let depth = crate::commands::int(p, "depth").unwrap_or(16);
     let caption_px = if caption { font_pt * res / 72.0 * 1.5 } else { 0.0 };
     let cell_w = ((f64::from(pw) - f64::from(cols + 1) * hs) / f64::from(cols)).max(1.0);
     let cell_h = ((f64::from(ph) - f64::from(rows + 1) * vs) / f64::from(rows)).max(1.0);
@@ -525,7 +525,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "file.automate.contactSheetII",
             "Contact Sheet II…",
             &["File", "Automate"],
-            r##"{"input":folder|[paths],"units":"inches|cm|mm|pixels"="inches","width":8,"height":10,"resolution":ppi=300,"mode":"rgb|gray|cmyk|lab"="rgb","depth":8|16=8,"columns":5,"rows":6,"placeAcrossFirst":bool=true,"autoSpacing":bool=true,"horizontal":units?,"vertical":units?,"rotateForBestFit":bool=false,"caption":bool=true (file name as caption),"font":family?,"fontSize":pt=12,"flatten":bool=false} → {documents, pages, images}"##,
+            r##"{"input":folder|[paths],"units":"inches|cm|mm|pixels"="inches","width":8,"height":10,"resolution":ppi=300,"mode":"rgb|gray"="rgb","depth":16|32=16,"columns":5,"rows":6,"placeAcrossFirst":bool=true,"autoSpacing":bool=true,"horizontal":units?,"vertical":units?,"rotateForBestFit":bool=false,"caption":bool=true (file name as caption),"font":family?,"fontSize":pt=12,"flatten":bool=false} → {documents, pages, images}"##,
             native,
             contact_sheet
         ),

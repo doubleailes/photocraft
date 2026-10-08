@@ -1,10 +1,10 @@
 //! Linear half-float documents (`docs/ocio-migration.md`, half-float step 2).
 //!
-//! Every RGB or grayscale document that a file, File › New or the clipboard brings in is RGBA
-//! half float in a linear version of the working space (linear sRGB, linear gray). Integer
-//! sources are converted at the door; float sources (EXR, HDR, 32-bit PSD) are already linear
-//! and keep their depth. CMYK, Lab, Indexed, Bitmap, Duotone and Multichannel documents keep
-//! their own depth and encoding until those modes are removed.
+//! Every document that a file, File › New or the clipboard brings in is RGB or grayscale half
+//! float in a linear version of the working space (linear sRGB, linear gray). Integer sources are
+//! converted at the door; float sources (EXR, HDR, 32-bit PSD) are already linear and keep their
+//! depth. Files in other colour models are converted to RGB or grayscale when they are read
+//! (`photocraft_io`).
 //!
 //! Tool colours (foreground, background, swatches, colour parameters) are picked in the working
 //! RGB space, encoded as usual. [`Session::to_doc_color`] converts one into the active
@@ -24,18 +24,17 @@ use crate::color_cmds::{convert_document, convert_surface, document_profile, mod
 use crate::edit_cmds::Clip;
 use crate::{Result, Session};
 
-/// The linear profile documents of `mode` are stored in, when that mode is linearised.
-pub fn linear_profile(mode: ColorMode) -> Option<&'static Profile> {
-    match mode_space(mode) {
-        ColorSpace::Rgb => Some(Builtin::LinearSrgb.profile()),
-        ColorSpace::Gray => Some(Builtin::LinearGray.profile()),
-        _ => None,
+/// The linear profile documents of `mode` are stored in.
+pub fn linear_profile(mode: ColorMode) -> &'static Profile {
+    match mode {
+        ColorMode::Rgb => Builtin::LinearSrgb.profile(),
+        ColorMode::Grayscale => Builtin::LinearGray.profile(),
     }
 }
 
 /// Is `doc` a linear document (tagged with its mode's linear profile)?
 pub fn is_linear(doc: &Document) -> bool {
-    let Some(lin) = linear_profile(doc.mode) else { return false };
+    let lin = linear_profile(doc.mode);
     let p = document_profile(doc);
     p.content_hash() == lin.content_hash() || p.same_colors(lin)
 }
@@ -66,7 +65,7 @@ pub fn linearize(doc: &mut Document) -> Result<bool> {
 /// (an integer file, or the float result of a command that works on encoded values) to linear
 /// half float; 32-bit float documents stay 32-bit.
 pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
-    let Some(lin) = linear_profile(doc.mode) else { return Ok(false) };
+    let lin = linear_profile(doc.mode);
     if is_linear(doc) {
         return Ok(false);
     }
@@ -225,13 +224,10 @@ fn convert_color(src: &Profile, dst: &Profile, c: [f32; 4]) -> [f32; 4] {
     ColorConv::between(src, dst).apply(c)
 }
 
-/// `c`, picked in `picker`, in the pixel values of a new linear document of `mode` (`c` itself
-/// for modes that are not linearised).
-pub fn to_linear_color(mode: ColorMode, picker: &Profile, c: [f32; 4]) -> [f32; 4] {
-    match linear_profile(mode) {
-        Some(_) => convert_color(picker, Builtin::LinearSrgb.profile(), c),
-        None => c,
-    }
+/// `c`, picked in `picker`, in the pixel values of a new linear document (an RGB colour; gray
+/// documents take its luminance).
+pub fn to_linear_color(picker: &Profile, c: [f32; 4]) -> [f32; 4] {
+    convert_color(picker, Builtin::LinearSrgb.profile(), c)
 }
 
 /// `c`, picked in `picker` (the working RGB space), in `doc`'s pixel values.
@@ -318,7 +314,8 @@ pub fn colors_in(p: &Value, keys: &[&str], to_doc: &ColorConv) -> Value {
 /// float for a linear document. Float patterns are linear already; the id is kept.
 pub fn pattern_for(pat: &Pattern, doc: &Document) -> Pattern {
     let fmt = pat.surface.format();
-    let (Some(lin), Some(src)) = (linear_profile(fmt.mode), photocraft_cms::builtin::default_for(mode_space(fmt.mode))) else { return pat.clone() };
+    let lin = linear_profile(fmt.mode);
+    let Some(src) = photocraft_cms::builtin::default_for(mode_space(fmt.mode)) else { return pat.clone() };
     if fmt.sample.is_float() || !is_linear(doc) {
         return pat.clone();
     }
@@ -417,8 +414,6 @@ pub fn legacy_new(s: &mut Session, p: &Value) -> usize {
     let num = |k: &str, d: u32| p.get(k).and_then(Value::as_f64).map_or(d, |v| v.round().clamp(1.0, 300_000.0) as u32);
     let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("rgb") {
         "gray" | "grayscale" => ColorMode::Grayscale,
-        "cmyk" => ColorMode::Cmyk,
-        "lab" => ColorMode::Lab,
         _ => ColorMode::Rgb,
     };
     let depth = match p.get("depth").and_then(Value::as_u64).unwrap_or(8) {

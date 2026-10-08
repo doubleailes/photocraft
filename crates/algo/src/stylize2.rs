@@ -2,7 +2,7 @@
 
 use photocraft_geom::Rect;
 
-use crate::fxutil::{MAXC, luma, native, ncol, subtractive, xy};
+use crate::fxutil::{MAXC, luma, native, ncol, xy};
 use crate::image::Image;
 use crate::noise::hash01;
 use crate::{Ctx, DiffuseMode, ExtrudeType, TileFill, WindMethod};
@@ -127,9 +127,8 @@ pub(crate) fn extrude(src: &Image, out: Rect, ctx: &Ctx, spec: &ExtrudeSpec) -> 
     };
     let shade = |px: &mut [f32], col: &[f32], k: f32| {
         let cc = ncol(ctx, n);
-        let sub = subtractive(ctx);
         for c in 0..cc {
-            px[c] = if sub { 1.0 - (1.0 - col[c]) * k } else { col[c] * k }.clamp(0.0, 1.0);
+            px[c] = (col[c] * k).clamp(0.0, 1.0);
         }
         if ctx.alpha {
             px[n - 1] = col[n - 1];
@@ -321,24 +320,19 @@ pub(crate) fn tiles(src: &Image, out: Rect, ctx: &Ctx, count: u32, max_offset: f
 }
 
 /// Trace Contour: per channel, outlines where values cross `level` (0–255)
-/// with a 1 px line (dark in additive models) on a white canvas.
+/// with a dark 1 px line on a white canvas.
 pub(crate) fn trace_contour(src: &Image, out: Rect, ctx: &Ctx, level: f32, upper: bool) -> Vec<f32> {
     let n = src.ch;
     let cc = ncol(ctx, n);
-    let sub = subtractive(ctx);
     let t = level.clamp(0.0, 255.0) / 255.0;
-    let bright = |x: i32, y: i32, c: usize| {
-        let v = src.get_edge(x, y, c, crate::image::Edge::Repeat, ctx.bounds.intersect(&src.rect));
-        if sub { 1.0 - v } else { v }
-    };
+    let bright = |x: i32, y: i32, c: usize| src.get_edge(x, y, c, crate::image::Edge::Repeat, ctx.bounds.intersect(&src.rect));
     let mut res = src.crop(out);
     for (i, px) in res.chunks_exact_mut(n).enumerate() {
         let (x, y) = xy(out, i);
         for (c, v) in px.iter_mut().enumerate().take(cc) {
             let me = bright(x, y, c) > t;
             let line = me == upper && [(1, 0), (-1, 0), (0, 1), (0, -1)].iter().any(|(dx, dy)| (bright(x + dx, y + dy, c) > t) != me);
-            let paper = if line { 0.0 } else { 1.0 };
-            *v = if sub { 1.0 - paper } else { paper };
+            *v = if line { 0.0 } else { 1.0 };
         }
     }
     res

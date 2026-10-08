@@ -277,10 +277,10 @@ fn place_scale_marker_builds_one_group_in_one_step() {
 }
 
 #[test]
-fn analysis_info_and_cmyk_document() {
+fn analysis_info_and_gray_document() {
     let mut s = Session::new();
-    s.execute("file.new", json!({"width": 30, "height": 20, "mode": "cmyk", "background": "white"})).unwrap();
-    assert_eq!(d(&s).mode, ColorMode::Cmyk);
+    s.execute("file.new", json!({"width": 30, "height": 20, "mode": "gray", "background": "white"})).unwrap();
+    assert_eq!(d(&s).mode, ColorMode::Grayscale);
     s.execute("count.add", json!({"x": 3, "y": 4})).unwrap();
     let r = s.execute("image.analysis.recordMeasurements", json!({"source": "selection"})).unwrap();
     assert_eq!(r["rows"][0]["values"]["area"], 600.0);

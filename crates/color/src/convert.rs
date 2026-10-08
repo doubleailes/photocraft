@@ -1,93 +1,16 @@
 //! Colour conversions between the document colour models.
 //!
+//! Colour conversions between colour models (documents are RGB or grayscale; CMYK and Lab
+//! values come from files, descriptors and presets).
+//!
 //! CMYK ↔ RGB goes through the ICC colour management module (`photocraft-cms`) with the
 //! built-in coated CMYK profile and sRGB (relative colorimetric with black point
-//! compensation, Photoshop's default), so CMYK pixels display and accept painted colours the
-//! way a colour-managed editor does. A document's embedded CMYK profile replaces the built-in
-//! one while its [`CmykSpace`] is active on the thread ([`with_cmyk_space`]: the compositor,
-//! the GPU upload and composite exports enter it); otherwise the built-in profiles apply.
-//! Lab uses the exact D50 formulas; gray is treated as sGray (gray `v` = sRGB `(v, v, v)`).
+//! compensation, Photoshop's default). Lab uses the exact D50 formulas; gray is treated as
+//! sGray (gray `v` = sRGB `(v, v, v)`).
 
-use std::cell::RefCell;
-use std::sync::{Arc, Mutex, OnceLock, Weak};
+use std::sync::OnceLock;
 
-use photocraft_cms::{Builtin, ColorSpace, Intent, Profile, Transform};
-
-/// A document's own CMYK profile, linked to sRGB both ways (relative colorimetric + BPC, like
-/// the built-in defaults). While a space is active on a thread ([`with_cmyk_space`]),
-/// [`cmyk_to_rgb`] and [`rgb_to_cmyk`] (and so `Surface::rgba`, the compositor's reads of CMYK
-/// layers and CMYK fill colours) use it instead of the built-in coated CMYK.
-#[derive(Debug)]
-pub struct CmykSpace {
-    to_srgb: Transform,
-    from_srgb: Transform,
-    /// Content hash of the profile (cache keys of converted pixels).
-    pub id: u64,
-}
-
-impl CmykSpace {
-    /// The space of a document's embedded profile bytes: `None` when there are none, they do
-    /// not parse as a CMYK profile, or they are the built-in coated CMYK (the default path).
-    /// Cached by allocation, so calling this per render is cheap.
-    pub fn for_profile(icc: Option<&Arc<Vec<u8>>>) -> Option<Arc<CmykSpace>> {
-        type Cache = Mutex<Vec<(Weak<Vec<u8>>, Option<Arc<CmykSpace>>)>>;
-        static CACHE: OnceLock<Cache> = OnceLock::new();
-        let bytes = icc?;
-        let cache = CACHE.get_or_init(Default::default);
-        {
-            let mut c = cache.lock().unwrap_or_else(|e| e.into_inner());
-            c.retain(|(w, _)| w.strong_count() > 0);
-            if let Some((_, s)) = c.iter().find(|(w, _)| w.as_ptr() == Arc::as_ptr(bytes)) {
-                return s.clone();
-            }
-        }
-        let space = Self::build(bytes);
-        cache.lock().unwrap_or_else(|e| e.into_inner()).push((Arc::downgrade(bytes), space.clone()));
-        space
-    }
-
-    fn build(bytes: &[u8]) -> Option<Arc<CmykSpace>> {
-        let p = Profile::parse(bytes).ok().filter(|p| p.color_space == ColorSpace::Cmyk)?;
-        let coated = Builtin::CoatedCmyk.profile();
-        if p.content_hash() == coated.content_hash() {
-            return None;
-        }
-        let srgb = Builtin::Srgb.profile();
-        let to_srgb = Transform::new(&p, srgb, Intent::RelativeColorimetric, true).ok()?;
-        let from_srgb = Transform::new(srgb, &p, Intent::RelativeColorimetric, true).ok()?;
-        Some(Arc::new(CmykSpace { to_srgb, from_srgb, id: p.content_hash() }))
-    }
-}
-
-thread_local! {
-    static ACTIVE_CMYK: RefCell<Option<Arc<CmykSpace>>> = const { RefCell::new(None) };
-}
-
-/// Restores the previously active CMYK space when dropped (also on unwind).
-struct Restore(Option<Arc<CmykSpace>>);
-
-impl Drop for Restore {
-    fn drop(&mut self) {
-        let prev = self.0.take();
-        ACTIVE_CMYK.with(|a| *a.borrow_mut() = prev);
-    }
-}
-
-/// Runs `f` with `space` as this thread's CMYK profile (`None`: the built-in coated CMYK).
-/// Thread-local: parallel workers must enter the scope themselves.
-pub fn with_cmyk_space<R>(space: Option<&Arc<CmykSpace>>, f: impl FnOnce() -> R) -> R {
-    if space.is_none() && ACTIVE_CMYK.with(|a| a.borrow().is_none()) {
-        return f();
-    }
-    let prev = ACTIVE_CMYK.with(|a| std::mem::replace(&mut *a.borrow_mut(), space.cloned()));
-    let _restore = Restore(prev);
-    f()
-}
-
-/// The CMYK space active on this thread (see [`with_cmyk_space`]).
-pub fn active_cmyk_space() -> Option<Arc<CmykSpace>> {
-    ACTIVE_CMYK.with(|a| a.borrow().clone())
-}
+use photocraft_cms::{Builtin, Intent, Transform};
 
 // The built-in profiles always link (the tests use these transforms); `None` only guards
 // against a cms regression, and then the conversions fall back to the naive formulas.
@@ -101,47 +24,26 @@ fn srgb_to_cmyk_transform() -> Option<&'static Transform> {
     T.get_or_init(|| Transform::new(Builtin::Srgb.profile(), Builtin::CoatedCmyk.profile(), Intent::RelativeColorimetric, true).ok()).as_ref()
 }
 
-/// Colour-managed CMYK → sRGB (the active document CMYK profile, else the built-in coated
-/// CMYK; relative colorimetric + BPC).
+/// Colour-managed CMYK → sRGB (the built-in coated CMYK; relative colorimetric + BPC).
 #[inline]
 pub fn cmyk_to_rgb(c: [f32; 4]) -> [f32; 3] {
+    let Some(t) = cmyk_to_srgb_transform() else {
+        return cmyk_to_rgb_naive(c);
+    };
     let mut o = [0.0f32; 3];
-    // The active document's embedded CMYK profile, if one is in scope.
-    let active = ACTIVE_CMYK.with(|a| match &*a.borrow() {
-        Some(s) => {
-            s.to_srgb.eval_fast(&c, &mut o);
-            true
-        }
-        None => false,
-    });
-    if !active {
-        let Some(t) = cmyk_to_srgb_transform() else {
-            return cmyk_to_rgb_naive(c);
-        };
-        t.eval_fast(&c, &mut o);
-    }
+    t.eval_fast(&c, &mut o);
     o
 }
 
-/// Colour-managed sRGB → CMYK (the active document CMYK profile, else the built-in coated
-/// CMYK; relative colorimetric + BPC).
+/// Colour-managed sRGB → CMYK (the built-in coated CMYK; relative colorimetric + BPC).
 #[inline]
 pub fn rgb_to_cmyk(rgb: [f32; 3]) -> [f32; 4] {
+    let Some(t) = srgb_to_cmyk_transform() else {
+        return rgb_to_cmyk_naive(rgb);
+    };
     let v = [rgb[0].clamp(0.0, 1.0), rgb[1].clamp(0.0, 1.0), rgb[2].clamp(0.0, 1.0)];
     let mut o = [0.0f32; 4];
-    let active = ACTIVE_CMYK.with(|a| match &*a.borrow() {
-        Some(s) => {
-            s.from_srgb.eval_fast(&v, &mut o);
-            true
-        }
-        None => false,
-    });
-    if !active {
-        let Some(t) = srgb_to_cmyk_transform() else {
-            return rgb_to_cmyk_naive(rgb);
-        };
-        t.eval_fast(&v, &mut o);
-    }
+    t.eval_fast(&v, &mut o);
     o
 }
 
@@ -249,49 +151,6 @@ mod tests {
                 assert!((back[i] - rgb[i]).abs() < 0.03, "{rgb:?} -> {back:?}");
             }
         }
-    }
-
-    #[test]
-    fn document_cmyk_space_scope() {
-        // A synthetic uncoated-like profile (heavier dot gain than the built-in coated one).
-        let params = photocraft_cms::synth::CmykParams {
-            description: "Test Uncoated".into(),
-            tvi: [0.26, 0.26, 0.26, 0.3],
-            grid_a2b: 5,
-            grid_b2a: 9,
-            ..Default::default()
-        };
-        let p = photocraft_cms::synth::cmyk_profile(&params);
-        let bytes = p.to_bytes();
-        let space = CmykSpace::for_profile(Some(&bytes)).expect("a CMYK profile other than the default");
-        // Cached by allocation.
-        assert!(Arc::ptr_eq(&space, &CmykSpace::for_profile(Some(&bytes)).unwrap()));
-        // The built-in profile, absent or non-CMYK bytes keep the default path.
-        assert!(CmykSpace::for_profile(Some(&Builtin::CoatedCmyk.profile().to_bytes())).is_none());
-        assert!(CmykSpace::for_profile(Some(&Builtin::Srgb.profile().to_bytes())).is_none());
-        assert!(CmykSpace::for_profile(Some(&Arc::new(vec![1, 2, 3]))).is_none());
-        assert!(CmykSpace::for_profile(None).is_none());
-        let ink = [0.0, 0.5, 0.5, 0.0];
-        let default = cmyk_to_rgb(ink);
-        let mut expect = [0.0f32; 3];
-        Transform::new(&p, Builtin::Srgb.profile(), Intent::RelativeColorimetric, true).unwrap().eval(&ink, &mut expect);
-        let inside = with_cmyk_space(Some(&space), || {
-            assert!(active_cmyk_space().is_some());
-            cmyk_to_rgb(ink)
-        });
-        for i in 0..3 {
-            assert!((inside[i] - expect[i]).abs() < 0.01, "{inside:?} vs {expect:?}");
-        }
-        assert!((0..3).any(|i| (inside[i] - default[i]).abs() > 0.02), "the document profile changes the colour: {inside:?} {default:?}");
-        // Restored afterwards (and nested scopes restore the outer one).
-        assert!(active_cmyk_space().is_none());
-        assert_eq!(cmyk_to_rgb(ink), default);
-        with_cmyk_space(Some(&space), || {
-            with_cmyk_space(None, || assert!(active_cmyk_space().is_none()));
-            assert!(active_cmyk_space().is_some());
-            let back = cmyk_to_rgb(rgb_to_cmyk([0.6, 0.4, 0.3]));
-            assert!((back[0] - 0.6).abs() < 0.04 && (back[2] - 0.3).abs() < 0.04, "{back:?}");
-        });
     }
 
     #[test]

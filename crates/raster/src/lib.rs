@@ -568,10 +568,8 @@ pub fn to_rgba(format: &PixelFormat, px: &[f32]) -> [f32; 4] {
     let n = format.mode.color_channels();
     let a = if format.alpha { px[n] } else { 1.0 };
     let rgb = match format.mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => [px[0]; 3],
-        ColorMode::Cmyk => photocraft_color::convert::cmyk_to_rgb([px[0], px[1], px[2], px[3]]),
-        ColorMode::Lab => photocraft_color::convert::lab_to_srgb([px[0] * 100.0, px[1] * 255.0 - 128.0, px[2] * 255.0 - 128.0]),
-        _ => [px[0], px[1], px[2]],
+        ColorMode::Grayscale => [px[0]; 3],
+        ColorMode::Rgb => [px[0], px[1], px[2]],
     };
     [rgb[0], rgb[1], rgb[2], a]
 }
@@ -579,13 +577,8 @@ pub fn to_rgba(format: &PixelFormat, px: &[f32]) -> [f32; 4] {
 pub fn from_rgba(format: &PixelFormat, rgba: [f32; 4]) -> Vec<f32> {
     let rgb = [rgba[0], rgba[1], rgba[2]];
     let mut out: Vec<f32> = match format.mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => vec![photocraft_color::convert::rgb_to_gray(rgb)],
-        ColorMode::Cmyk => photocraft_color::convert::rgb_to_cmyk(rgb).to_vec(),
-        ColorMode::Lab => {
-            let l = photocraft_color::convert::srgb_to_lab(rgb);
-            vec![l[0] / 100.0, (l[1] + 128.0) / 255.0, (l[2] + 128.0) / 255.0]
-        }
-        _ => rgb.to_vec(),
+        ColorMode::Grayscale => vec![photocraft_color::convert::rgb_to_gray(rgb)],
+        ColorMode::Rgb => rgb.to_vec(),
     };
     if format.alpha {
         out.push(rgba[3]);
@@ -599,20 +592,11 @@ pub fn from_rgba(format: &PixelFormat, rgba: [f32; 4]) -> Vec<f32> {
 pub fn from_rgba_into(format: &PixelFormat, rgba: [f32; 4], out: &mut [f32]) -> usize {
     let rgb = [rgba[0], rgba[1], rgba[2]];
     let n = match format.mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => {
+        ColorMode::Grayscale => {
             out[0] = photocraft_color::convert::rgb_to_gray(rgb);
             1
         }
-        ColorMode::Cmyk => {
-            out[..4].copy_from_slice(&photocraft_color::convert::rgb_to_cmyk(rgb));
-            4
-        }
-        ColorMode::Lab => {
-            let l = photocraft_color::convert::srgb_to_lab(rgb);
-            out[..3].copy_from_slice(&[l[0] / 100.0, (l[1] + 128.0) / 255.0, (l[2] + 128.0) / 255.0]);
-            3
-        }
-        _ => {
+        ColorMode::Rgb => {
             out[..3].copy_from_slice(&rgb);
             3
         }
@@ -652,7 +636,9 @@ mod tests {
 
     #[test]
     fn from_rgba_into_matches_from_rgba() {
-        for fmt in [PixelFormat::RGBA8, PixelFormat::GRAY8, PixelFormat::GRAYA8, PixelFormat::CMYKA8, PixelFormat::new(ColorMode::Lab, SampleType::F32, true)] {
+        for fmt in
+            [PixelFormat::RGBA8, PixelFormat::GRAY8, PixelFormat::GRAYA8, PixelFormat::RGBA16F, PixelFormat::new(ColorMode::Grayscale, SampleType::F32, true)]
+        {
             let mut buf = [0.0f32; 8];
             let n = from_rgba_into(&fmt, [0.2, 0.5, 0.7, 0.4], &mut buf);
             assert_eq!(&buf[..n], &from_rgba(&fmt, [0.2, 0.5, 0.7, 0.4])[..]);
@@ -661,9 +647,7 @@ mod tests {
 
     #[test]
     fn zero_alloc_accessors_match_read_region() {
-        for fmt in
-            [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::CMYKA8, PixelFormat::GRAY8]
-        {
+        for fmt in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::GRAY8] {
             let mut s = Surface::with_default(fmt, &vec![0.25; fmt.channels()]);
             let r = Rect::new(-300, -20, 300, 40);
             for (i, (x, y)) in [(-299, -19), (0, 0), (255, 39), (256, 10), (299, 0)].into_iter().enumerate() {
@@ -766,15 +750,12 @@ mod tests {
         assert!((g.pixel(1, 1)[0] - 1.0).abs() < 1e-2);
         let f = s.convert(PixelFormat::RGBA32F);
         assert_eq!(f.pixel(1, 1), vec![1.0, 1.0, 1.0, 1.0]);
-        let c = s.convert(PixelFormat::CMYKA8);
-        let p = c.pixel(1, 1);
-        assert!(p[3] < 0.01 && (p[4] - 1.0).abs() < 1e-6);
-        let back = c.convert(PixelFormat::RGBA8);
+        let back = g.convert(PixelFormat::RGBA8);
         assert_eq!(back.pixel(1, 1), vec![1.0, 1.0, 1.0, 1.0]);
     }
 
     #[test]
-    fn rgba_from_gray_and_cmyk() {
+    fn rgba_from_gray() {
         let mut g = Surface::new(PixelFormat::GRAYA8);
         g.write_pixel(0, 0, &[0.5, 1.0]);
         let v = g.rgba(0, 0);

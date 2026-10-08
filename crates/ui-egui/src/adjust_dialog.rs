@@ -29,8 +29,7 @@ pub fn owns(fields: &Map<String, Value>) -> bool {
 pub fn open(app: &mut PhotocraftApp, command: &str) -> Option<u64> {
     let kind = command.strip_prefix(PREFIX).filter(|k| adjust_editors::has_editor(k))?;
     let spec = photocraft_engine::commands::find(command)?;
-    let mode = app.session.active().map_or(photocraft_doc::ColorMode::Rgb, |s| s.doc.mode);
-    let defaults = photocraft_engine::adjust_params::default_for(kind, mode).ok()?;
+    let defaults = photocraft_engine::adjust_params::default_for(kind).ok()?;
     let mut fields = Map::new();
     fields.insert("__command".into(), json!(command));
     fields.insert("__label".into(), json!(spec.label));
@@ -50,7 +49,7 @@ pub fn body(app: &mut PhotocraftApp, ui: &mut egui::Ui, fields: &mut Map<String,
     let active = app.session.active().and_then(|s| s.active_layer);
     let gray = app.session.active().is_some_and(|s| adjust_editors::is_gray(s.doc.mode));
     let hist = match active {
-        Some(id) if adjust_editors::needs_histogram(&kind) => Some(tone::histograms(app, HistSource::Layer(id), adjust_editors::space_of(&values))),
+        Some(id) if adjust_editors::needs_histogram(&kind) => Some(tone::histograms(app, HistSource::Layer(id))),
         _ => None,
     };
     let cx = EditorCx { mem: egui::Id::new(("adjust-dialog", kind.as_str())), hist, gray, swatches: adjust_editors::swatches(app) };
@@ -107,9 +106,7 @@ mod tests {
             let before = harness.state().session.active().unwrap().revision;
             let steps = harness.state().session.active().unwrap().history.past_len();
             // Change the settings the way automation does.
-            let sample = photocraft_engine::adjust_params::to_params(
-                &photocraft_engine::adjust_params::from_params(kind, &sample_params(kind), None, photocraft_doc::ColorMode::Rgb).unwrap(),
-            );
+            let sample = photocraft_engine::adjust_params::to_params(&photocraft_engine::adjust_params::from_params(kind, &sample_params(kind), None).unwrap());
             let d = harness.state_mut().ui.dialog_mut(id).unwrap();
             if let Value::Object(p) = sample {
                 d.fields.extend(p);

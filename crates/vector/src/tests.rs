@@ -193,7 +193,7 @@ fn render_shape_formats_and_paint() {
         ..Default::default()
     };
     for sample in SampleType::ALL {
-        for mode in [photocraft_color::ColorMode::Rgb, photocraft_color::ColorMode::Grayscale, photocraft_color::ColorMode::Cmyk] {
+        for mode in [photocraft_color::ColorMode::Rgb, photocraft_color::ColorMode::Grayscale] {
             let fmt = PixelFormat::new(mode, sample, true);
             let s = render_shape(&sh, fmt, Rect::new(0, 0, 20, 20));
             assert_eq!(s.format(), fmt);

@@ -10,8 +10,8 @@ use std::sync::Arc;
 
 use common::*;
 use photocraft_color::{BlendMode, ColorMode, SampleType};
+use photocraft_doc::adjust::HueRange;
 use photocraft_doc::adjust::{CurvePoint, LevelsChannel};
-use photocraft_doc::adjust::{HueRange, ToneSpace};
 use photocraft_doc::*;
 use photocraft_geom::Rect;
 use photocraft_io::*;
@@ -46,21 +46,11 @@ fn adjustments() -> Vec<(Adjustment, bool)> {
     let all = vec![
         (Adjustment::BrightnessContrast { brightness: 30.0, contrast: -20.0, legacy: false }, true),
         (Adjustment::BrightnessContrast { brightness: -40.0, contrast: 50.0, legacy: true }, true),
-        (
-            Adjustment::Levels {
-                master: lc(10, 240, 1.2),
-                per_channel: [lc(0, 255, 1.0), lc(5, 250, 0.8), lc(20, 200, 1.5)],
-                space: ToneSpace::Rgb,
-                black: Default::default(),
-            },
-            true,
-        ),
+        (Adjustment::Levels { master: lc(10, 240, 1.2), per_channel: [lc(0, 255, 1.0), lc(5, 250, 0.8), lc(20, 200, 1.5)] }, true),
         (
             Adjustment::Curves {
                 master: pts(&[(0, 0), (128, 150), (255, 255)]),
                 per_channel: [pts(&[(0, 10), (255, 255)]), pts(&[(0, 0), (255, 245)]), pts(&[(0, 0), (64, 32), (255, 255)])],
-                space: ToneSpace::Rgb,
-                black: Vec::new(),
             },
             true,
         ),

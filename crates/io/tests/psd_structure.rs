@@ -116,11 +116,55 @@ tg!(testgen_rgb32_zipp, Version::Psd, ColorMode::Rgb, 32, Compression::ZipPredic
 tg!(testgen_gray8_zipp, Version::Psd, ColorMode::Grayscale, 8, Compression::ZipPrediction);
 tg!(testgen_gray16_rle, Version::Psd, ColorMode::Grayscale, 16, Compression::Rle);
 tg!(testgen_gray32_raw, Version::Psd, ColorMode::Grayscale, 32, Compression::Raw);
-tg!(testgen_cmyk8_rle, Version::Psd, ColorMode::Cmyk, 8, Compression::Rle);
-tg!(testgen_cmyk16_zip, Version::Psd, ColorMode::Cmyk, 16, Compression::Zip);
-tg!(testgen_lab8_rle, Version::Psd, ColorMode::Lab, 8, Compression::Rle);
 tg!(testgen_psb_rgb8_rle, Version::Psb, ColorMode::Rgb, 8, Compression::Rle);
-tg!(testgen_psb_cmyk16_zipp, Version::Psb, ColorMode::Cmyk, 16, Compression::ZipPrediction);
+
+/// CMYK and Lab files open as RGB documents at their depth, layer for layer, each pixel
+/// converted (CMYK through the built-in coated CMYK when the file has no profile).
+#[test]
+fn testgen_cmyk_and_lab_open_as_rgb() {
+    use photocraft_color::ColorMode as Mode;
+    for (v, mode, depth, c) in [
+        (Version::Psd, ColorMode::Cmyk, 8, Compression::Rle),
+        (Version::Psd, ColorMode::Cmyk, 16, Compression::Zip),
+        (Version::Psb, ColorMode::Cmyk, 16, Compression::ZipPrediction),
+        (Version::Psd, ColorMode::Lab, 8, Compression::Rle),
+        (Version::Psd, ColorMode::Lab, 16, Compression::Zip),
+    ] {
+        let f = testgen::layered(v, mode, depth, c);
+        let imp = import("t.psd", &f.to_bytes().unwrap()).unwrap();
+        let d = &imp.document;
+        let what = format!("{mode:?} {depth}");
+        assert_eq!(d.mode, Mode::Rgb, "{what}");
+        assert_eq!(d.depth.bits(), u32::from(depth), "{what}");
+        assert_eq!(d.icc_profile, None, "{what}: the file's profile describes its own model");
+        assert!(imp.warnings.iter().any(|w| w.contains("converted to RGB")), "{what}: {:?}", imp.warnings);
+        let records = f.layers().iter().filter(|l| l.section_type() != SectionType::BoundingDivider).count();
+        assert_eq!(d.walk().len(), records, "{what}: layer for layer");
+        // A layer pixel converts like the file's samples do.
+        let rec = f.layers().iter().find(|l| !l.rect.is_empty() && l.section_type() == SectionType::Other).unwrap();
+        let (w, _) = rec.rect.size().unwrap();
+        let (x, y) = (rec.rect.left + 1, rec.rect.top + 1);
+        let i = 1 + w;
+        let sample = |id: i16| {
+            let p = rec.decode_channel(id, f.header.depth, f.header.version).unwrap();
+            if depth == 8 { f32::from(p[i]) / 255.0 } else { f32::from(u16::from_be_bytes([p[2 * i], p[2 * i + 1]])) / 65535.0 }
+        };
+        let want = match mode {
+            // Stored inverted (1 = paper).
+            ColorMode::Cmyk => photocraft_color::convert::cmyk_to_rgb([1.0 - sample(0), 1.0 - sample(1), 1.0 - sample(2), 1.0 - sample(3)]),
+            _ => {
+                // 16-bit Lab stores a*/b* as 32768 + 256·a.
+                let ab = |v: f32| if depth == 16 { (v * 65535.0 - 32768.0) / 256.0 } else { v * 255.0 - 128.0 };
+                photocraft_color::convert::lab_to_srgb([sample(0) * 100.0, ab(sample(1)), ab(sample(2))])
+            }
+        };
+        let layer = d.walk().into_iter().map(|(_, _, l)| l).find(|l| l.name == String::from_utf8_lossy(&rec.name)).unwrap();
+        let got = layer.surface().unwrap().rgba(x, y);
+        for c in 0..3 {
+            assert!((got[c] - want[c]).abs() < 0.02, "{what}: {got:?} vs {want:?}");
+        }
+    }
+}
 
 #[test]
 fn testgen_small_all_compressions() {
@@ -181,20 +225,21 @@ fn fallback_modes_import_flattened() {
 fn multichannel_imports_ink_channels() {
     for depth in testgen::mode_depths(ColorMode::Multichannel) {
         let f = testgen::merged_only(Version::Psd, ColorMode::Multichannel, *depth, Compression::Rle, 9, 5);
-        let (d, _) = psd_to_document(&f);
-        assert_eq!(d.mode, photocraft_color::ColorMode::Multichannel);
-        assert!(d.layers.is_empty());
+        let (d, w) = psd_to_document(&f);
+        // Converted to RGB: the inks print into one Background layer and stay as spot channels.
+        assert_eq!(d.mode, photocraft_color::ColorMode::Rgb);
+        assert_eq!(d.layers.len(), 1);
+        assert!(w.iter().any(|w| w.contains("Multichannel")), "{w:?}");
         assert_eq!(d.channels.len(), usize::from(f.header.channels));
         assert!(d.channels.iter().all(|c| c.spot.is_some()));
         // Stored dark = ink: the channel value is 1 − the stored sample.
         let merged = f.decode_merged().unwrap();
         let first = if *depth == 8 { f32::from(merged[0]) / 255.0 } else { f32::from(u16::from_be_bytes([merged[0], merged[1]])) / 65535.0 };
         assert!((d.channels[0].surface.pixel(0, 0)[0] - (1.0 - first)).abs() < 1e-3);
-        // Re-export writes the same planes.
+        // Re-export writes an RGB file.
         let out = export(&d, "x.psd", &ExportOptions::default()).unwrap();
         let back = PsdFile::from_bytes(&out.bytes).unwrap();
-        assert_eq!(back.header.color_mode, ColorMode::Multichannel);
-        assert_eq!(back.decode_merged().unwrap(), merged, "{depth}");
+        assert_eq!(back.header.color_mode, ColorMode::Rgb, "{depth}");
     }
 }
 

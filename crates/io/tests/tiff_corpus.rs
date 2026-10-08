@@ -78,11 +78,9 @@ fn corpus_round_trips_through_layered_tiff() {
         let Ok(bytes) = std::fs::read(path) else { continue };
         let Ok(imported) = import(&name, &bytes) else { continue };
         let doc = imported.document;
-        // Only modes a TIFF holds; everything else is saved flat by design. Multichannel documents
-        // have no layers at all (their channels are the image): nothing here to test.
-        if !matches!(doc.pixel_format().mode, photocraft_color::ColorMode::Grayscale | photocraft_color::ColorMode::Rgb | photocraft_color::ColorMode::Cmyk)
-            || doc.mode == photocraft_color::ColorMode::Multichannel
-        {
+        // Multichannel files open as their inks printed into one Background layer: no layers of
+        // their own to round-trip.
+        if doc.channels.iter().any(|c| c.spot.is_some()) && doc.layers.len() == 1 {
             continue;
         }
         if doc.size.width.max(doc.size.height) > 4096 {

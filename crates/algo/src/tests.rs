@@ -413,8 +413,8 @@ fn halos_and_output_area() {
 
 #[test]
 fn other_colour_modes_work() {
-    for mode in [ColorMode::Grayscale, ColorMode::Cmyk, ColorMode::Lab] {
-        let f = PixelFormat::new(mode, SampleType::U8, true);
+    for (mode, sample) in [(ColorMode::Grayscale, SampleType::U8), (ColorMode::Grayscale, SampleType::F16), (ColorMode::Rgb, SampleType::F16)] {
+        let f = PixelFormat::new(mode, sample, true);
         let mut s = Surface::new(f);
         let px: Vec<f32> = vec![0.4; f.channels() - 1].into_iter().chain([1.0]).collect();
         s.fill_rect(R, &px);

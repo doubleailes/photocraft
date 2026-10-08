@@ -1,7 +1,7 @@
 use super::*;
 use photocraft_raster::Surface;
 
-const MODES: [&str; 3] = ["rgb", "cmyk", "gray"];
+const MODES: [&str; 2] = ["rgb", "gray"];
 const DEPTHS: [u32; 3] = [8, 16, 32];
 
 /// White document with a black 20×20 square at (10, 10) on its Background layer.

@@ -204,10 +204,10 @@ fn blend_if_rejects_bad_params() {
 
 #[test]
 fn blend_if_channel_names_follow_the_mode() {
-    let mut s = session(8, "cmyk");
-    s.execute("layer.layerStyle.blendingOptions", json!({"blendIf": {"channel": "black", "underlying": [0, 128]}})).unwrap();
-    assert_eq!(active(&s).blend_if.get(4)[1].white, [128, 128]);
-    assert!(s.execute("layer.layerStyle.blendingOptions", json!({"blendIf": {"channel": "red", "underlying": [0, 128]}})).is_err());
+    let mut s = session(8, "rgb");
+    s.execute("layer.layerStyle.blendingOptions", json!({"blendIf": {"channel": "blue", "underlying": [0, 128]}})).unwrap();
+    assert_eq!(active(&s).blend_if.get(3)[1].white, [128, 128]);
+    assert!(s.execute("layer.layerStyle.blendingOptions", json!({"blendIf": {"channel": "black", "underlying": [0, 128]}})).is_err());
     // A grayscale document's Gray is its one channel.
     let mut s = session(16, "grayscale");
     s.execute("layer.layerStyle.blendingOptions", json!({"blendIf": {"channel": "gray", "thisLayer": [30, 255]}})).unwrap();
@@ -393,16 +393,14 @@ fn mask_all_objects_masks_the_subject() {
 }
 
 #[test]
-fn layer_masks_in_gray_cmyk_lab() {
-    for mode in ["gray", "cmyk", "lab"] {
-        let mut s = session(16, mode);
-        paint(&mut s, disc);
-        s.execute("layer.layerMask.fromTransparency", json!({})).unwrap();
-        s.execute("layer.layerMask.apply", json!({})).unwrap();
-        s.execute("layer.matting.defringe", json!({"width": 1})).unwrap();
-        s.execute("layer.matting.removeBlackMatte", json!({})).unwrap();
-        assert!(active(&s).surface().unwrap().rgba(20, 15)[3] > 0.99, "{mode}");
-    }
+fn layer_masks_in_gray() {
+    let mut s = session(16, "gray");
+    paint(&mut s, disc);
+    s.execute("layer.layerMask.fromTransparency", json!({})).unwrap();
+    s.execute("layer.layerMask.apply", json!({})).unwrap();
+    s.execute("layer.matting.defringe", json!({"width": 1})).unwrap();
+    s.execute("layer.matting.removeBlackMatte", json!({})).unwrap();
+    assert!(active(&s).surface().unwrap().rgba(20, 15)[3] > 0.99);
 }
 
 #[test]

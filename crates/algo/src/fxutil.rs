@@ -24,19 +24,6 @@ pub(crate) fn ncol(ctx: &Ctx, n: usize) -> usize {
     if ctx.alpha { n - 1 } else { n }
 }
 
-/// Whether channel values are ink amounts (1 = dark) rather than light.
-#[inline]
-pub(crate) fn subtractive(ctx: &Ctx) -> bool {
-    ctx.mode == ColorMode::Cmyk
-}
-
-/// Whether per-channel "brightness" operations should run on an RGB
-/// conversion instead of the native channels (Lab's a/b are not intensities).
-#[inline]
-pub(crate) fn via_rgb(ctx: &Ctx) -> bool {
-    ctx.mode == ColorMode::Lab
-}
-
 /// Document coordinates of the `i`th pixel of `out`.
 #[inline]
 pub(crate) fn xy(out: Rect, i: usize) -> (i32, i32) {
@@ -70,13 +57,8 @@ pub(crate) fn native(ctx: &Ctx, c: [f32; 4]) -> [f32; MAXC] {
 #[inline]
 pub(crate) fn luma(ctx: &Ctx, px: &[f32]) -> f32 {
     match ctx.mode {
-        ColorMode::Grayscale | ColorMode::Bitmap | ColorMode::Duotone => px[0],
-        ColorMode::Lab => px[0],
+        ColorMode::Grayscale => px[0],
         ColorMode::Rgb => 0.299 * px[0] + 0.587 * px[1] + 0.114 * px[2],
-        _ => {
-            let c = rgba(ctx, px);
-            0.299 * c[0] + 0.587 * c[1] + 0.114 * c[2]
-        }
     }
 }
 

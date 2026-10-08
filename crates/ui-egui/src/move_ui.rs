@@ -96,8 +96,6 @@ pub(crate) fn display_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Do
         let t0 = crate::gpu_canvas::now_ms();
         match photocraft_engine::layer_multi_cmds::moved(&doc, &p.ids, offset.0, offset.1) {
             Ok(d) => {
-                // Duotone documents display through their inks.
-                let d = photocraft_engine::mode_cmds::display_document(&d).unwrap_or(d);
                 p.shown = Some(Arc::new(d));
                 p.offsets.push(offset);
             }
@@ -138,7 +136,6 @@ fn floating_doc(app: &mut PhotocraftApp, idx: usize) -> Option<(Arc<Document>, u
     if shown {
         let t0 = crate::gpu_canvas::now_ms();
         let d = photocraft_engine::float_cmds::displayed(st, crate::canvas::selection_drag_delta(app).unwrap_or((0, 0)))?;
-        let d = photocraft_engine::mode_cmds::display_document(&d).unwrap_or(d);
         let p = app.move_preview.as_mut()?;
         p.shown = Some(Arc::new(d));
         p.offsets.push(offset);

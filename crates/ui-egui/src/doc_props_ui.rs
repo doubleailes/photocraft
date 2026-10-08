@@ -23,16 +23,7 @@ pub fn shows_document(doc: &Document, active: Option<LayerId>) -> bool {
 }
 
 /// Image › Mode command id and label per colour mode, in Photoshop's dropdown order.
-pub const MODES: &[(ColorMode, &str, &str)] = &[
-    (ColorMode::Bitmap, "Bitmap", "image.mode.bitmap"),
-    (ColorMode::Grayscale, "Grayscale", "image.mode.grayscale"),
-    (ColorMode::Duotone, "Duotone", "image.mode.duotone"),
-    (ColorMode::Indexed, "Indexed Color", "image.mode.indexedColor"),
-    (ColorMode::Rgb, "RGB Color", "image.mode.rgb"),
-    (ColorMode::Cmyk, "CMYK Color", "image.mode.cmyk"),
-    (ColorMode::Lab, "Lab Color", "image.mode.lab"),
-    (ColorMode::Multichannel, "Multichannel", "image.mode.multichannel"),
-];
+pub const MODES: &[(ColorMode, &str, &str)] = &[(ColorMode::Grayscale, "Grayscale", "image.mode.grayscale"), (ColorMode::Rgb, "RGB Color", "image.mode.rgb")];
 
 pub const DEPTHS: &[(SampleType, &str, &str)] = &[
     (SampleType::U8, "8 Bits/Channel", "image.mode.bits8"),

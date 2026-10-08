@@ -283,7 +283,7 @@ mod tests {
 
     #[test]
     fn works_at_all_depths() {
-        for f in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA32F, PixelFormat::GRAYA8, PixelFormat::CMYKA8] {
+        for f in [PixelFormat::RGBA8, PixelFormat::RGBA16, PixelFormat::RGBA16F, PixelFormat::RGBA32F, PixelFormat::GRAYA8] {
             let mut s = Surface::new(f);
             let mut st = stroke(&[(5.0, 5.0), (40.0, 5.0)], 6.0);
             st.brush.color = [1.0, 1.0, 1.0, 1.0];

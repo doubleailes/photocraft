@@ -11,7 +11,6 @@ use photocraft_algo::exif;
 use photocraft_algo::lens::{self, EdgeMode, LensCorrection};
 use photocraft_algo::transform::Interp;
 use photocraft_algo::wideangle::{self, WideAngle};
-use photocraft_color::ColorMode;
 use photocraft_doc::{Document, LayerContent, LayerId, SmartFilter};
 use photocraft_geom::Rect;
 use photocraft_raster::{Surface, from_rgba_into};
@@ -269,12 +268,7 @@ fn filterable(s: &Session) -> std::result::Result<(), String> {
 }
 
 fn raw_enabled(s: &Session) -> std::result::Result<(), String> {
-    filterable(s)?;
-    let d = s.active().ok_or("no document open")?;
-    match d.doc.mode {
-        ColorMode::Rgb | ColorMode::Grayscale => Ok(()),
-        m => Err(format!("Camera Raw Filter needs an RGB or Grayscale document (this one is {m:?})")),
-    }
+    filterable(s)
 }
 
 /// Runs `f` on the target layer (pixel layer edited in place inside the selection; smart object

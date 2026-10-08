@@ -144,20 +144,16 @@ fn touch(st: &mut DocState) {
 /// Colour channel names of a document mode (the rows under the composite).
 pub fn color_names(mode: ColorMode) -> &'static [&'static str] {
     match mode {
-        ColorMode::Cmyk => &["Cyan", "Magenta", "Yellow", "Black"],
-        ColorMode::Lab => &["Lightness", "a", "b"],
         ColorMode::Grayscale => &["Gray"],
-        _ => &["Red", "Green", "Blue"],
+        ColorMode::Rgb => &["Red", "Green", "Blue"],
     }
 }
 
 /// Name of the composite row.
 pub fn composite_name(mode: ColorMode) -> &'static str {
     match mode {
-        ColorMode::Cmyk => "CMYK",
-        ColorMode::Lab => "Lab",
         ColorMode::Grayscale => "Gray",
-        _ => "RGB",
+        ColorMode::Rgb => "RGB",
     }
 }
 
@@ -537,7 +533,7 @@ pub(crate) fn channel_surface_for_filter<'a>(doc: &'a mut Document, layer: Optio
 /// and the filters. A mask target enables them on any layer with a mask, so ⌘I inverts an
 /// adjustment layer's mask as in Photoshop (#780).
 fn edits_mask(id: &str) -> bool {
-    id.strip_prefix("image.adjustments.").is_some_and(|kind| crate::adjust_params::default_for(kind, ColorMode::Rgb).is_ok())
+    id.strip_prefix("image.adjustments.").is_some_and(|kind| crate::adjust_params::default_for(kind).is_ok())
         || crate::filters::params_for(id, &Value::Null).is_some()
 }
 
@@ -1293,15 +1289,12 @@ fn mergeable(s: &Session) -> Vec<usize> {
     v
 }
 
-/// Merge Channels: grayscale documents of one size become the channels of an RGB, CMYK or Lab
-/// document (extra documents become alpha channels); the sources close.
+/// Merge Channels: grayscale documents of one size become the channels of an RGB document (extra documents become alpha channels); the sources close.
 fn merge(s: &mut Session, p: &Value) -> Result<Value> {
     let cmd = "channel.merge";
     let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("rgb") {
         "rgb" => ColorMode::Rgb,
-        "cmyk" => ColorMode::Cmyk,
-        "lab" => ColorMode::Lab,
-        other => return Err(bad(cmd, format!("unknown mode `{other}`"))),
+        other => return Err(bad(cmd, format!("unknown mode `{other}` (documents are RGB)"))),
     };
     let srcs: Vec<usize> = match p.get("documents").and_then(Value::as_array) {
         Some(a) => a
@@ -1596,7 +1589,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Merge Channels…",
             [],
             None,
-            r##"{"mode":"rgb|cmyk|lab"="rgb","documents":[index,…]?=open grayscale docs of the active size,"name":str?}"##,
+            r##"{"mode":"rgb"="rgb","documents":[index,…]?=open grayscale docs of the active size,"name":str?}"##,
             can_merge,
             merge
         ),

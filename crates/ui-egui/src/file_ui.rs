@@ -65,7 +65,7 @@ pub fn invoke(app: &mut PhotocraftApp, ctx: &egui::Context, id: &str, params: &V
             id,
             tl!("Contact Sheet II"),
             json!({"input": dir, "units": "inches", "width": 8.0, "height": 10.0, "resolution": 300.0, "mode": "rgb", "depth": 8, "columns": 5, "rows": 6, "placeAcrossFirst": true, "autoSpacing": true, "rotateForBestFit": false, "caption": true, "font": photocraft_text::fonts::DEFAULT_FAMILY, "fontSize": 12.0, "flatten": false}),
-            json!({"units": ["inches", "cm", "pixels"], "mode": ["rgb", "gray", "cmyk", "lab"]}),
+            json!({"units": ["inches", "cm", "pixels"], "mode": ["rgb", "gray"]}),
         ),
         "file.automate.createDroplet" => {
             let Some(action) = crate::actions::selected_action(app) else {

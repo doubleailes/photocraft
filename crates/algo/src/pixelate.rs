@@ -5,7 +5,7 @@
 
 use photocraft_geom::Rect;
 
-use crate::fxutil::{MAXC, cell_point, luma, native, ncol, rgba, set_rgba, subtractive, via_rgb, xy};
+use crate::fxutil::{MAXC, cell_point, luma, native, ncol, xy};
 use crate::image::Image;
 use crate::noise::hash01;
 use crate::{Ctx, MezzotintType};
@@ -18,8 +18,6 @@ pub(crate) fn color_halftone(src: &Image, out: Rect, ctx: &Ctx, max_radius: f32,
     let rmax = max_radius.max(1.0);
     // Cell side such that a full-size dot just covers the cell's corners.
     let cell = rmax * std::f32::consts::SQRT_2;
-    let sub = subtractive(ctx);
-    let rgb = via_rgb(ctx);
     let mut res = src.crop(out);
     let b = ctx.bounds;
     let (ox, oy) = (b.x0 as f32, b.y0 as f32);
@@ -28,27 +26,19 @@ pub(crate) fn color_halftone(src: &Image, out: Rect, ctx: &Ctx, max_radius: f32,
     if clip.is_empty() {
         return res;
     }
-    // Channel value at a point averaged over five taps (for Lab, of the RGB conversion).
+    // Channel value at a point averaged over five taps.
     let value = |x: f32, y: f32, c: usize| -> f32 {
         let d = cell * 0.25;
         let mut acc = 0.0;
-        let mut px = [0.0f32; MAXC];
         for (dx, dy) in [(0.0, 0.0), (-d, -d), (d, -d), (-d, d), (d, d)] {
             // Clamp to the bounds so cells straddling the edge read real pixels.
             let (ix, iy) = (((x + dx).floor() as i32).clamp(clip.x0, clip.x1 - 1), ((y + dy).floor() as i32).clamp(clip.y0, clip.y1 - 1));
-            if rgb {
-                for (k, p) in px.iter_mut().enumerate().take(n) {
-                    *p = src.get(ix, iy, k);
-                }
-                acc += rgba(ctx, &px[..n])[c];
-            } else {
-                acc += src.get(ix, iy, c);
-            }
+            acc += src.get(ix, iy, c);
         }
         acc / 5.0
     };
     let w = out.width() as usize;
-    let chans = if rgb { 3 } else { cc };
+    let chans = cc;
     let mut vals = [0.0f32; MAXC];
     for (i, px) in res.chunks_exact_mut(n).enumerate() {
         let (x, y) = (out.x0 + (i % w) as i32, out.y0 + (i / w) as i32);
@@ -69,7 +59,7 @@ pub(crate) fn color_halftone(src: &Image, out: Rect, ctx: &Ctx, max_radius: f32,
                     // Back to document space to read the cell's value.
                     let (dx, dy) = (mu * co - mv * s + ox, mu * s + mv * co + oy);
                     let raw = value(dx, dy, c).clamp(0.0, 1.0);
-                    let ink = if sub && !rgb { raw } else { 1.0 - raw };
+                    let ink = 1.0 - raw;
                     // Dot area tracks ink: πr² = ink·cell² until dots touch, then grow to cover the corners.
                     let touch = std::f32::consts::FRAC_PI_4;
                     let r = if ink <= touch {
@@ -81,14 +71,9 @@ pub(crate) fn color_halftone(src: &Image, out: Rect, ctx: &Ctx, max_radius: f32,
                     cov = cov.max((r - d + 0.5).clamp(0.0, 1.0).min(std::f32::consts::PI * r * r));
                 }
             }
-            *v = if sub && !rgb { cov } else { 1.0 - cov };
+            *v = 1.0 - cov;
         }
-        if rgb {
-            let a = if ctx.alpha { px[n - 1] } else { 1.0 };
-            set_rgba(ctx, px, [vals[0], vals[1], vals[2], a]);
-        } else {
-            px[..cc].copy_from_slice(&vals[..cc]);
-        }
+        px[..cc].copy_from_slice(&vals[..cc]);
     }
     res
 }
@@ -262,20 +247,11 @@ fn mezzo_threshold(kind: MezzotintType, x: i32, y: i32, c: u32, seed: u32) -> f3
 pub(crate) fn mezzotint(src: &Image, out: Rect, ctx: &Ctx, kind: MezzotintType, seed: u32) -> Vec<f32> {
     let n = src.ch;
     let cc = ncol(ctx, n);
-    let rgb = via_rgb(ctx);
     let mut res = src.crop(out);
     for (i, px) in res.chunks_exact_mut(n).enumerate() {
         let (x, y) = xy(out, i);
-        if rgb {
-            let mut c = rgba(ctx, px);
-            for (k, v) in c.iter_mut().enumerate().take(3) {
-                *v = if *v > mezzo_threshold(kind, x, y, k as u32, seed) { 1.0 } else { 0.0 };
-            }
-            set_rgba(ctx, px, c);
-        } else {
-            for (k, v) in px.iter_mut().enumerate().take(cc) {
-                *v = if *v > mezzo_threshold(kind, x, y, k as u32, seed) { 1.0 } else { 0.0 };
-            }
+        for (k, v) in px.iter_mut().enumerate().take(cc) {
+            *v = if *v > mezzo_threshold(kind, x, y, k as u32, seed) { 1.0 } else { 0.0 };
         }
     }
     res
@@ -324,9 +300,8 @@ pub(crate) fn pointillize(src: &Image, out: Rect, ctx: &Ctx, cell_size: f32, see
             // Slight per-dot brightness jitter, as in pointillist strokes.
             let j = (hash01(gx, gy, 17, seed) - 0.5) * 0.08;
             let cc = ncol(ctx, n);
-            let sub = subtractive(ctx);
             for d in dot.iter_mut().take(cc) {
-                *d = (*d + if sub { -j } else { j }).clamp(0.0, 1.0);
+                *d = (*d + j).clamp(0.0, 1.0);
             }
             let k = (depth + 0.5).clamp(0.0, 1.0);
             for c in 0..n {

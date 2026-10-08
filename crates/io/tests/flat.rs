@@ -48,8 +48,6 @@ codec_rt!(tga_rgb8_opaque, "tga", ColorMode::Rgb, SampleType::U8, false, 0.0);
 codec_rt!(tga_gray8, "tga", ColorMode::Grayscale, SampleType::U8, false, 0.0);
 codec_rt!(tiff_rgba8, "tiff", ColorMode::Rgb, SampleType::U8, true, 0.0);
 codec_rt!(tiff_rgb16, "tif", ColorMode::Rgb, SampleType::U16, false, 0.0);
-codec_rt!(tiff_cmyk8, "tiff", ColorMode::Cmyk, SampleType::U8, false, 0.0);
-codec_rt!(tiff_cmyka16, "tiff", ColorMode::Cmyk, SampleType::U16, true, 0.0);
 codec_rt!(tiff_gray8, "tiff", ColorMode::Grayscale, SampleType::U8, false, 0.0);
 
 /// EXR stores linear light: a linear document round-trips exactly; an sRGB (untagged) one is
@@ -167,13 +165,6 @@ fn alpha_to_jpeg_warns() {
 }
 
 #[test]
-fn cmyk_layered_to_png_warns_conversion() {
-    let d = gen_doc(ColorMode::Cmyk, SampleType::U8, Features::PIXELS);
-    let r = export(&d, "a.png", &ExportOptions::default()).unwrap();
-    assert!(r.warnings.iter().any(|w| w.contains("RGB")), "{:?}", r.warnings);
-}
-
-#[test]
 fn effects_are_written_to_psd_and_read_back() {
     let mut d = gen_doc(ColorMode::Rgb, SampleType::U8, Features::PIXELS);
     d.layers[1].effects.items.push(photocraft_doc::Effect::ColorOverlay {
@@ -263,14 +254,11 @@ fn transparency_is_composited_over_white_for_formats_without_alpha() {
     let rgb: [&[f32]; 3] = [&[0.0, 0.0, 0.0, 0.0], &[0.0, 0.0, 1.0, 0.5], &[0.0, 0.63, 0.0, 1.0]];
     let over_white = vec![vec![1.0, 1.0, 1.0], vec![0.5, 0.5, 1.0], vec![0.0, 0.63, 0.0]];
     let gray: [&[f32]; 2] = [&[0.0, 0.0], &[0.0, 0.5]];
-    // CMYK white is no ink.
-    let cmyk: [&[f32]; 2] = [&[1.0, 1.0, 1.0, 1.0, 0.0], &[0.0, 0.0, 0.0, 1.0, 0.5]];
     let cases = [
         (ColorMode::Rgb, SampleType::U8, &rgb[..], over_white.clone()),
         (ColorMode::Rgb, SampleType::U16, &rgb[..], over_white.clone()),
         (ColorMode::Rgb, SampleType::F32, &rgb[..], over_white),
         (ColorMode::Grayscale, SampleType::U8, &gray[..], vec![vec![1.0], vec![0.5]]),
-        (ColorMode::Cmyk, SampleType::U8, &cmyk[..], vec![vec![0.0; 4], vec![0.0, 0.0, 0.0, 0.5]]),
     ];
     for (mode, depth, cols, want) in cases {
         let what = format!("{mode:?} {depth:?}");

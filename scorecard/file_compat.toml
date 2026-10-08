@@ -119,10 +119,10 @@ note = "No knockout / blend_interior / transparency_shapes in doc, compose or io
 
 [[item]]
 id = "FILE-215-17"
-target = "CMYK/RGB documents preview spot inks; spot plates export (TIFF extra samples, PDF)"
+target = "RGB documents preview spot inks; spot plates export (TIFF extra samples, PDF)"
 status = "missing"
 issue = 215
-note = "compose multichannel.rs:1 spot preview for Multichannel only"
+note = "Multichannel files open as their inks printed into an RGB Background (io native::print_inks); spot channels are not previewed live"
 
 [[item]]
 id = "FILE-215-18"

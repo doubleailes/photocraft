@@ -65,12 +65,6 @@ pub struct DocM {
     /// Patterns stored with the document.
     #[serde(default)]
     pub patterns: Vec<PatternM>,
-    /// Indexed Color palette.
-    #[serde(default)]
-    pub color_table: Option<photocraft_doc::ColorTable>,
-    /// Duotone inks.
-    #[serde(default)]
-    pub duotone: Option<photocraft_doc::Duotone>,
     /// Window › Layer Comps.
     #[serde(default)]
     pub layer_comps: Vec<LayerCompM>,

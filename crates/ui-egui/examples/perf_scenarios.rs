@@ -201,8 +201,6 @@ struct Sizes {
     ten_mp: (u32, u32),
     /// 24 MP for the selection algorithms and Content-Aware Scale.
     big_photo: (u32, u32),
-    /// A4 at 300 ppi.
-    a4: (u32, u32),
 }
 
 const FULL: Sizes = Sizes {
@@ -213,7 +211,6 @@ const FULL: Sizes = Sizes {
     float32: (4000, 3000),
     ten_mp: (3872, 2592),
     big_photo: (6000, 4000),
-    a4: (2480, 3508),
 };
 
 const QUICK: Sizes = Sizes {
@@ -224,7 +221,6 @@ const QUICK: Sizes = Sizes {
     float32: (1200, 900),
     ten_mp: (1200, 800),
     big_photo: (1600, 1066),
-    a4: (1240, 1754),
 };
 
 /// The layered document of #209: a background, six pixel layers with a drop shadow and a stroke,
@@ -764,24 +760,5 @@ fn algorithm_scenarios(b: &mut Bench, sz: &Sizes) {
             }
             Err(e) => b.errors.push((names[0].into(), e)),
         }
-    }
-    let cmyk = "brush dab on A4 300 ppi CMYK + refresh";
-    if b.wanted(cmyk) {
-        let (w, h) = sz.a4;
-        let mut s = Session::new();
-        let setup = exec(&mut s, "file.new", json!({"width": w, "height": h, "mode": "cmyk", "resolution": 300, "background": "white"}))
-            .and_then(|_| exec(&mut s, "layer.new.layer", json!({"name": "paint"})));
-        if let Err(e) = setup {
-            b.errors.push((cmyk.into(), e));
-            return;
-        }
-        let _ = b.refresh(&s, true);
-        let reps = b.reps;
-        b.time(cmyk, &mut s, reps, true, |b, s, i| {
-            let (x, y) = (200 + (i as u32 * 97) % (w - 400), 200 + (i as u32 * 61) % (h - 400));
-            let t = Instant::now();
-            exec(s, "paint.stroke", json!({"points": [[x, y]], "size": 40, "hardness": 0.8, "color": "#c03020"}))?;
-            Ok(ms(t) + b.refresh(s, false)?)
-        });
     }
 }

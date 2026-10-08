@@ -195,8 +195,8 @@ mod tests {
 
     #[test]
     fn once_erases_only_the_sampled_colour_in_every_format() {
-        for mode in [ColorMode::Rgb, ColorMode::Cmyk, ColorMode::Grayscale] {
-            for sample in [SampleType::U8, SampleType::U16, SampleType::F32] {
+        for mode in [ColorMode::Rgb, ColorMode::Grayscale] {
+            for sample in SampleType::ALL {
                 let fmt = PixelFormat::new(mode, sample, true);
                 let mut s = setup(fmt);
                 let bs = BgEraseSettings { sampling: Sampling::Once, limits: Limits::Discontiguous, tolerance: 0.05, ..Default::default() };

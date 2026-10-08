@@ -14,7 +14,7 @@ Photoshop parity on purpose: CMYK, Lab, ICC proofing and the profile menus go aw
 | Embedded ICC on import | Mapped to a named config colour space (primaries/white/TRC match), else an anonymous transform, via ocio-rs [#8](https://github.com/doubleailes/ocio-rs/issues/8). |
 | Pixel storage | **Every document is RGBA half float (f16) in the config's `scene_linear` role.** 8/16-bit integer sources are converted on import. 32-bit float documents stay f32. |
 | Compositing | Linear, f32 working precision, in `scene_linear`. Blend modes behave like Nuke, not Photoshop. |
-| Modes | RGB only (+ Grayscale as RGB with a flag, TBD). CMYK, Lab and Indexed are deleted. |
+| Modes | RGB and Grayscale. CMYK, Lab, Indexed, Bitmap, Duotone and Multichannel are deleted (done, see step 3a); files in those modes are converted when opened. |
 | Config | Default `ocio://cg-config-latest` (ACES 2.0, OCIO 2.5). `$OCIO` overrides it. A Color Settings override (file path) wins over both. |
 | Viewer | Display / View / Look pickers + exposure/gamma before the view transform. Baked LUT (shaper + 64³ Rgba16Float) now, analytic WGSL once ocio-rs [#9](https://github.com/doubleailes/ocio-rs/issues/9) lands. |
 
@@ -38,6 +38,9 @@ the later phases only convert at import and export and never branch on depth.
   1. **Done.** Add `F16` to `photocraft_color::SampleType`, with tile storage, the compose read/write path and GPU upload. All behind tests at every depth.
   2. **Done.** Make import and new documents produce f16 linear only. Convert U8/U16 sources at the door (details below).
   3. Delete the U8/U16 document paths and their tests. Keep integer types only for codec I/O and masks.
+     * a. **Done.** Remove the non-RGB/gray modes (phase 8's mode removal, pulled forward; details below).
+     * b. Remove the integer depth commands (`image.mode.bits8`/`bits16`), the integer transfers and
+       `linear_doc::legacy_new`; convert any integer document at `add_document`.
   4. Benchmark at 24–36 MP before and after: tile memory, composite time, brush latency.
 
 ### Half-float step 2 (`crates/engine/src/linear_doc.rs`)
@@ -55,8 +58,8 @@ half-float documents follow the same path.
   converted, since they may be Photoshop's own rendering. Smart-object contents and library patterns
   are linearised when they enter a float RGB/gray document (render, stack modes, Edit Contents,
   unpack, fills, overlays).
-  Float files (EXR, HDR, 32-bit PSD) keep their values and depth. CMYK, Lab, Indexed, Bitmap,
-  Duotone and Multichannel keep their depth and encoding until phase 8 removes them.
+  Float files (EXR, HDR, 32-bit PSD) keep their values and depth. Files in other colour models are
+  converted to RGB or gray before they reach the door (step 3a).
 * **New documents.** RGB/gray `file.new` makes 16-bit half float (or 32-bit float when asked), tagged linear.
   The New dialog offers 16/32-bit float for RGB and gray. `image.mode.bits16f` converts an open
   document; Image › Mode › 16 Bits/Channel shows checked for half float.
@@ -81,6 +84,30 @@ half-float documents follow the same path.
 * **Not converted yet** (follow-ups): adjustment-layer colours (Photo Filter, Black & White tint),
   character/paragraph style presets, the Info panel and colour samplers (they show document
   values), and `gradientFill.get`, which reports stops as document values.
+
+### Half-float step 3a: RGB and grayscale only
+
+`photocraft_color::ColorMode` is `{Grayscale, Rgb}`. Everything that existed for the other models is gone:
+the Image › Mode commands (CMYK, Lab, Indexed Color, Color Table, Bitmap, Duotone, Multichannel), Image ›
+Trap, `Document.color_table`/`duotone`, the CMYK/Lab compositing paths (CPU and GPU), `CmykSpace`,
+`ToneSpace` (Levels/Curves are the composite plus red/green/blue; old `space`/`black` fields in saved
+files are ignored), CMYK/Lab file export and the `channel.merge` CMYK/Lab targets.
+
+* **Import** (`crates/io/src/native.rs`). Layered PSD/PSB and flat files convert their samples as they
+  are read, at the file's depth, then go through the linear door like any integer file:
+  * CMYK through the embedded CMYK profile, else the built-in coated CMYK (relative colorimetric + BPC), to sRGB.
+  * Lab through the D50 formulas to sRGB (16-bit Lab chroma as Photoshop stores it).
+  * Indexed via its palette to RGB; Bitmap and Duotone (the gray channel; inks not interpreted) to Gray.
+  * Multichannel: the inks are kept as spot channels and printed (`print_inks`) into one locked
+    Background RGB layer.
+  * Descriptor colours (CMYK, Lab) become RGB; CMYK/Lab Levels/Curves keep the composite only;
+    CMYK/Lab patterns convert like layers. Each conversion adds an import warning.
+* **CMYK stays a proof and print target.** Proof Setup, Proof Colors, Gamut Warning and the plate
+  previews still use the working CMYK space; File › Print with PhotoCraft-managed colour converts the
+  flattened composite straight to the printer profile (CMYK included). `edit.convertToProfile` and
+  `edit.assignProfile` refuse CMYK and Lab profiles.
+* `file.new`, the New dialog, Contact Sheet and Conditional Mode Change offer RGB and Grayscale only.
+  The perf scenario P33 (CMYK brush dab) is retired.
 
 1. **Half-float documents** (see the scope above).
 2. **`crates/ocio` wrapper (L0, new).**
@@ -111,12 +138,12 @@ half-float documents follow the same path.
    * `edit.colorSettings` becomes the OCIO config, working-space info and the file-rules view.
    * The Color Lookup adjustment loads any OCIO `FileTransform` (cube, CLF/CTF, CDL, …) and gains an OCIO "Look" adjustment layer.
 8. **Removal.**
-   * Delete `crates/cms`, CMYK/Lab/Indexed modes, Proof Setup/Proof Colors/Gamut Warning, `proof_sim.rs` and `profileMismatch`.
+   * Delete `crates/cms`, Proof Setup/Proof Colors/Gamut Warning, `proof_sim.rs` and `profileMismatch`. (The CMYK/Lab/Indexed/Bitmap/Duotone/Multichannel modes are already gone: half-float step 3a.)
    * Update `docs/parity.md`, the parity floor and the scorecard: the fork removes those menu items on purpose.
    * Update `AGENTS.md` rule 2 to say: colour goes through `photocraft-ocio`, never ICC.
 
 ## Open questions
 
-* Grayscale: keep it as a mode (single-channel half) or drop it (RGB only)?
+* Grayscale: kept as a mode (single-channel half) for now; drop it (RGB only) later?
 * Gradient and brush mixing space: linear always, or offer a perceptual option (the `color_picking` role)?
 * 8-bit PNG export default: `sRGB - Display` encoding via the default view, or the plain `sRGB - Texture` inverse?

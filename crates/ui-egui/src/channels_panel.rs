@@ -66,10 +66,8 @@ pub fn show(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     let masked = active_layer.and_then(|id| doc.layer(id)).filter(|l| l.mask.is_some()).cloned();
     let mask_tex = masked.as_ref().and_then(|l| Some(app.mask_thumb(&ctx, &doc, l.id, l.mask.as_ref()?)));
     let mask_targeted = masked.is_some() && app.ui.mask_target && view.target == ChannelTarget::Composite && !quick;
-    // Multichannel images are their ink channels only (no composite or colour rows).
-    let multichannel = doc.mode == photocraft_doc::ColorMode::Multichannel;
-    let mut rows = if multichannel { Vec::new() } else { vec![Row::Composite] };
-    if colors > 1 && !multichannel {
+    let mut rows = vec![Row::Composite];
+    if colors > 1 {
         rows.extend((0..colors).map(Row::Color));
     }
     if masked.is_some() {

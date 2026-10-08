@@ -213,7 +213,7 @@ pub(crate) fn adjust_as_filter(kind: &str, p: &Value, surf: &Surface) -> Option<
         process_surface(&mut out, None, &mut |px, r| tone::shadows_highlights(px, r.width() as usize, r.height() as usize, &sh));
     } else {
         let mode = surf.format().mode;
-        let adj = crate::adjust_params::from_params(kind, p, None, mode).ok()?;
+        let adj = crate::adjust_params::from_params(kind, p, None).ok()?;
         crate::pixels::adjust_surface(&mut out, &adj, None, mode);
     }
     out.prune();

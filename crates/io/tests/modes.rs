@@ -1,39 +1,34 @@
-//! Indexed Color and Duotone documents in flat exports.
+//! Files in colour models PhotoCraft documents don't use open converted: Indexed and
+//! Multichannel as RGB, Bitmap and Duotone as grayscale (`photocraft_io::native`).
 
-use photocraft_color::{Color, ColorMode, SampleType};
-use photocraft_doc::{ColorTable, Document, Duotone, DuotoneInk, Size};
-
-fn doc(mode: ColorMode) -> Document {
-    let mut d = Document::with_background("m", Size::new(4, 2), ColorMode::Rgb, SampleType::U8, Color::rgba(1.0, 0.0, 0.0, 1.0));
-    d.mode = mode;
-    d
-}
+use photocraft_color::ColorMode;
+use photocraft_psd::testgen;
+use photocraft_psd::{ColorMode as PsdMode, Compression, Version};
 
 #[test]
-fn indexed_png_is_palette_png() {
-    let mut d = doc(ColorMode::Indexed);
-    d.color_table = Some(ColorTable { colors: vec![[0, 0, 0], [255, 0, 0]], transparent: None });
-    let r = photocraft_io::export(&d, "x.png", &Default::default()).unwrap();
-    // IHDR colour type 3 = indexed; a PLTE chunk follows.
-    assert_eq!(r.bytes[25], 3);
-    assert!(r.bytes.windows(4).any(|w| w == b"PLTE"));
-    let back = photocraft_io::import("x.png", &r.bytes).unwrap().document;
-    let px = back.layers[0].surface().unwrap().rgba(1, 1);
-    assert_eq!(&px[..3], &[1.0, 0.0, 0.0]);
-    // Other formats keep the expanded pixels.
-    let j = photocraft_io::export(&d, "x.tif", &Default::default()).unwrap();
-    assert!(!j.bytes.is_empty());
-}
-
-#[test]
-fn duotone_exports_the_inks_as_rgb() {
-    // Mid gray background.
-    let mut d = Document::with_background("m", Size::new(4, 2), ColorMode::Grayscale, SampleType::U8, Color::rgba(0.5, 0.5, 0.5, 1.0));
-    d.mode = ColorMode::Duotone;
-    d.duotone = Some(Duotone { inks: vec![DuotoneInk::new("Black", [0.0; 3]), DuotoneInk::new("Orange", [1.0, 0.5, 0.0])], psd_raw: None });
-    let r = photocraft_io::export(&d, "x.png", &Default::default()).unwrap();
-    assert!(r.warnings.iter().any(|w| w.contains("Duotone")), "{:?}", r.warnings);
-    let back = photocraft_io::import("x.png", &r.bytes).unwrap().document;
-    let px = back.layers[0].surface().unwrap().rgba(0, 0);
-    assert!(px[0] > px[2] + 0.05, "warm: {px:?}");
+fn flattened_modes_open_as_rgb_or_grayscale() {
+    for (mode, depth, want) in [
+        (PsdMode::Indexed, 8, ColorMode::Rgb),
+        (PsdMode::Bitmap, 1, ColorMode::Grayscale),
+        (PsdMode::Duotone, 8, ColorMode::Grayscale),
+        (PsdMode::Multichannel, 8, ColorMode::Rgb),
+        (PsdMode::Multichannel, 16, ColorMode::Rgb),
+    ] {
+        let f = testgen::merged_only(Version::Psd, mode, depth, Compression::Rle, 7, 5);
+        let r = photocraft_io::import("m.psd", &f.to_bytes().unwrap()).unwrap();
+        let d = &r.document;
+        let what = format!("{mode:?} {depth}");
+        assert_eq!(d.mode, want, "{what}");
+        assert_eq!((d.size.width, d.size.height), (7, 5), "{what}");
+        assert_eq!(d.layers.len(), 1, "{what}: the image is one Background layer");
+        let s = d.layers[0].surface().unwrap();
+        assert_eq!(s.format().mode, want, "{what}");
+        assert!(s.read_region(d.bounds()).iter().all(|v| v.is_finite() && (0.0..=1.0).contains(v)), "{what}");
+        if mode == PsdMode::Multichannel {
+            // The inks stay as spot channels; the image is their print over paper.
+            assert_eq!(d.channels.len(), 2, "{what}");
+            assert!(d.channels.iter().all(|c| c.spot.is_some()), "{what}");
+            assert!(r.warnings.iter().any(|w| w.contains("Multichannel")), "{what}: {:?}", r.warnings);
+        }
+    }
 }

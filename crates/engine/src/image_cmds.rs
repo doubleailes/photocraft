@@ -434,22 +434,6 @@ pub fn specs() -> Vec<CommandSpec> {
             has_doc,
             |s, p| convert_mode(s, ColorMode::Grayscale, p)
         ),
-        spec!(
-            "image.mode.cmyk",
-            "CMYK Color",
-            ["Image", "Mode"],
-            r##"{"profile":"<builtin id>|working|/path/to/profile.icc"=working,"intent":"perceptual|relative|saturation|absolute"="relative","bpc":bool=true}"##,
-            has_doc,
-            |s, p| convert_mode(s, ColorMode::Cmyk, p)
-        ),
-        spec!(
-            "image.mode.lab",
-            "Lab Color",
-            ["Image", "Mode"],
-            r##"{"profile":"<builtin id>|working|/path/to/profile.icc"=working,"intent":"perceptual|relative|saturation|absolute"="relative","bpc":bool=true}"##,
-            has_doc,
-            |s, p| convert_mode(s, ColorMode::Lab, p)
-        ),
         spec!("image.mode.bits8", "8 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U8)),
         spec!("image.mode.bits16", "16 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::U16)),
         spec!("image.mode.bits32", "32 Bits/Channel", ["Image", "Mode"], "{}", has_doc, |s, _| convert_depth(s, SampleType::F32)),
@@ -621,9 +605,7 @@ mod tests {
         assert_eq!(doc(&s).depth, SampleType::U16);
         assert_eq!(doc(&s).layers[1].surface().unwrap().format().sample, SampleType::U16);
         assert_eq!(doc(&s).layers[1].mask.as_ref().unwrap().surface.format().sample, SampleType::U16);
-        s.execute("image.mode.cmyk", json!({})).unwrap();
         s.execute("image.mode.bits32", json!({})).unwrap();
-        s.execute("image.mode.lab", json!({})).unwrap();
         s.execute("image.mode.rgb", json!({})).unwrap();
         s.execute("image.mode.bits8", json!({})).unwrap();
         let d = doc(&s);

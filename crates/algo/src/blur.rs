@@ -605,15 +605,15 @@ mod tests {
     fn layer_box_blurs_match_direct_convolution_at_any_radius() {
         // Gaussian and Box Blur at radii up to several times the layer (37 × 23), filtered as a
         // document layer (canvas edge repeated, as Photoshop does) and on their own (transparent
-        // beyond), at every depth, with and without alpha, 1 to 5 channels.
+        // beyond), at every depth, with and without alpha, 1 to 4 channels.
         let canvas = Rect::new(0, 0, 37, 23);
         let formats = [
             PixelFormat::RGBA8,
             PixelFormat::RGBA16,
             PixelFormat::RGBA32F,
             PixelFormat::GRAY8,
-            PixelFormat::CMYKA8,
-            PixelFormat::new(ColorMode::Lab, SampleType::F32, false),
+            PixelFormat::RGBA16F,
+            PixelFormat::new(ColorMode::Rgb, SampleType::F32, false),
         ];
         let params = [
             FilterParams::GaussianBlur { radius: 4.5 },
@@ -628,7 +628,9 @@ mod tests {
             let tol = match fmt.sample {
                 SampleType::U8 => 1.0 / 255.0,
                 SampleType::U16 => 1.0 / 65535.0,
-                _ => 0.0,
+                // Half float: 11 significant bits.
+                SampleType::F16 => 1.0 / 2048.0,
+                SampleType::F32 => 0.0,
             } + 2e-5;
             for p in &params {
                 let boxes = box_widths(p).expect("a box-pass blur");

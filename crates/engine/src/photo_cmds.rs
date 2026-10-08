@@ -88,12 +88,8 @@ fn load_sources(s: &Session, p: &Value, cmd: &str) -> Result<Loaded> {
         return Err(bad(cmd, "pass \"paths\" (files or a folder) or \"useOpenDocuments\": true"));
     }
     let first = &docs[0].1;
-    let mut fmt = first.pixel_format();
-    if matches!(fmt.mode, ColorMode::Cmyk | ColorMode::Lab | ColorMode::Multichannel) {
-        // Registration and blending work in RGB; like Photoshop, the result is RGB.
-        fmt = PixelFormat::new(ColorMode::Rgb, fmt.sample, true);
-    }
-    let icc = (first.pixel_format().mode == fmt.mode).then(|| first.icc_profile.clone()).flatten();
+    let fmt = first.pixel_format();
+    let icc = first.icc_profile.clone();
     let out = docs
         .into_iter()
         .map(|(name, d)| {
@@ -244,7 +240,7 @@ pub(crate) fn seam_blend(warped: &[Surface], canvas: Rect, order: &[usize], seam
                 for c in 0..ch {
                     let f = photo.factor(i, c, r2);
                     let v = &mut roi.px[k * ch + c];
-                    *v = if fmt.mode == ColorMode::Cmyk { 1.0 - (1.0 - *v) * f } else { *v * f };
+                    *v *= f;
                     if !fmt.sample.is_float() {
                         *v = v.clamp(0.0, 1.0);
                     }

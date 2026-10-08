@@ -47,7 +47,6 @@ const F_REL: u32 = 512u;         // effect paint: coverage relative to the layer
 const F_STROKE_OUT: u32 = 1024u; // effect paint: outside stroke band
 const F_FIRST: u32 = 2048u;      // outside strokes: nothing accumulated yet
 const F_CHANNELS: u32 = 4096u;   // lerp: per-channel weights in p0 (channel restrictions)
-const F_LAB: u32 = 65536u;      // Lab document: Normal mixes in CIELAB
 const F_QUANT: u32 = 32768u;    // lerp: A rounded to p0.x steps (adjustment results, integer docs)
 const F_ADD_DIFF: u32 = 16384u;  // lerp: A + (B - C) premultiplied (clips on pass-through groups)
 const F_TEXT_GAMMA: u32 = 8192u; // blend / atop / fx merge: type layer, mix coverage at gamma p4.w
@@ -229,12 +228,6 @@ fn composite(mode: i32, b: vec4<f32>, s: vec4<f32>, opacity: f32) -> vec4<f32> {
     let ab = b.a;
     let as_ = s.a * opacity;
     if (as_ <= 0.0) { return b; }
-    if ((op.flags & F_LAB) != 0u && mode == M_NORMAL && ab > 0.0) {
-        // psblend::composite on Lab documents: Normal mixes in CIELAB.
-        let ao = as_ + ab * (1.0 - as_);
-        let m = srgb_to_lab(b.rgb) * (ab * (1.0 - as_) / ao) + srgb_to_lab(s.rgb) * (as_ / ao);
-        return vec4(lab_to_srgb(m), ao);
-    }
     let bl = blend_rgb(mode, b.rgb, s.rgb);
     let ao = as_ + ab * (1.0 - as_);
     if (ao <= 0.0) { return vec4(0.0); }
@@ -264,37 +257,6 @@ fn composite_g(mode: i32, b: vec4<f32>, s: vec4<f32>, opacity: f32, gamma_on: bo
     let g = op.p4.w; // psblend::text_gamma
     let pw = (1.0 - as_) * ab * text_enc(b.rgb, g) + (1.0 - ab) * as_ * text_enc(s.rgb, g) + as_ * ab * text_enc(bl, g);
     return vec4(text_dec(pw / ao, g), ao);
-}
-
-// photocraft_color::convert::{srgb_to_lab, lab_to_srgb} (D50, Bradford to sRGB).
-const D50: vec3<f32> = vec3(0.96422, 1.0, 0.82521);
-fn lab_f(t: f32) -> f32 {
-    if (t > 0.008856452) { return pow(t, 1.0 / 3.0); }   // (6/29)^3
-    return t / 0.12841855 + 0.13793103;                    // 3 (6/29)^2, 4/29
-}
-fn lab_finv(t: f32) -> f32 {
-    if (t > 0.20689656) { return t * t * t; }             // 6/29
-    return 0.12841855 * (t - 0.13793103);
-}
-fn srgb_to_lab(c: vec3<f32>) -> vec3<f32> {
-    let lin = vec3(srgb_to_linear(c.r), srgb_to_linear(c.g), srgb_to_linear(c.b));
-    let x = (0.436074 * lin.r + 0.385064 * lin.g + 0.143080 * lin.b) / D50.x;
-    let y = (0.222504 * lin.r + 0.716878 * lin.g + 0.060618 * lin.b) / D50.y;
-    let z = (0.013932 * lin.r + 0.097104 * lin.g + 0.714173 * lin.b) / D50.z;
-    let fx = lab_f(x);
-    let fy = lab_f(y);
-    let fz = lab_f(z);
-    return vec3(116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz));
-}
-fn lab_to_srgb(lab: vec3<f32>) -> vec3<f32> {
-    let fy = (lab.x + 16.0) / 116.0;
-    let fx = fy + lab.y / 500.0;
-    let fz = fy - lab.z / 200.0;
-    let xyz = vec3(lab_finv(fx) * D50.x, lab_finv(fy) * D50.y, lab_finv(fz) * D50.z);
-    let r = 3.133856 * xyz.x - 1.616867 * xyz.y - 0.490615 * xyz.z;
-    let g = -0.978768 * xyz.x + 1.916142 * xyz.y + 0.033454 * xyz.z;
-    let b = 0.071945 * xyz.x - 0.228991 * xyz.y + 1.405243 * xyz.z;
-    return vec3(linear_to_srgb(clamp(r, 0.0, 1.0)), linear_to_srgb(clamp(g, 0.0, 1.0)), linear_to_srgb(clamp(b, 0.0, 1.0)));
 }
 
 fn dissolve_noise(d: vec2<i32>) -> f32 {

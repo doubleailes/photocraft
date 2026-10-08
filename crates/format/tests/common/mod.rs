@@ -220,11 +220,6 @@ pub fn rich_doc(mode: ColorMode, depth: SampleType) -> Document {
     let mut pat = Surface::new(PixelFormat::new(photocraft_color::ColorMode::Rgb, photocraft_color::SampleType::U16, true));
     scribble(&mut pat, 21, false);
     d.patterns.push(photocraft_doc::Pattern::new("$$$/Patterns/Test=Scribble", pat, 32, 24));
-    d.color_table = Some(photocraft_doc::ColorTable { colors: vec![[0, 0, 0], [255, 128, 0]], transparent: Some(1) });
-    d.duotone = Some(photocraft_doc::Duotone {
-        inks: vec![photocraft_doc::DuotoneInk::new("Black", [0.0; 3]), photocraft_doc::DuotoneInk::new("PANTONE 151 C", [1.0, 0.5, 0.0])],
-        psd_raw: Some(vec![1, 2, 3]),
-    });
     d.guides = Guides { horizontal: vec![10.0, 20.5], vertical: vec![100.25] };
     let mut sel = Surface::new(PixelFormat::GRAY8);
     scribble(&mut sel, 14, false);

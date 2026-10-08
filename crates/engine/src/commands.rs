@@ -229,13 +229,7 @@ fn destructive_adjust(s: &mut Session, label: &str, adj: Adjustment, p: &Value) 
 /// Lenient adjustment from params for previews: bad params fall back to the kind's defaults.
 /// Commands use the checked [`crate::adjust_params::from_params`].
 pub fn adjustment_from_params(kind: &str, p: &Value) -> Adjustment {
-    crate::adjust_params::from_params(kind, p, None, ColorMode::Rgb)
-        .or_else(|_| crate::adjust_params::default_for(kind, ColorMode::Rgb))
-        .unwrap_or(Adjustment::Invert)
-}
-
-fn doc_mode(s: &Session) -> ColorMode {
-    s.active().map_or(ColorMode::Rgb, |d| d.doc.mode)
+    crate::adjust_params::from_params(kind, p, None).or_else(|_| crate::adjust_params::default_for(kind)).unwrap_or(Adjustment::Invert)
 }
 
 // ---------- the table ----------
@@ -249,7 +243,7 @@ fn build() -> Vec<CommandSpec> {
             "New…",
             ["File"],
             Some("Cmd+N"),
-            r##"{"width":u32=1920,"height":u32=1080,"mode":"rgb|gray|cmyk|lab"="rgb","depth":8|16|32=16 (RGB and gray: 32 is 32-bit float, anything else half float; both linear),"background":"white|black|backgroundColor|transparent|#rrggbb"="white","resolution":ppi=72,"name":str}"##,
+            r##"{"width":u32=1920,"height":u32=1080,"mode":"rgb|gray"="rgb","depth":16|32=16 (32 is 32-bit float, anything else half float; both linear),"background":"white|black|backgroundColor|transparent|#rrggbb"="white","resolution":ppi=72,"name":str}"##,
             always,
             |s, p| {
                 // A size given as a float (`512.0`, as JSON from a UI field) is still that size (#254).
@@ -264,23 +258,17 @@ fn build() -> Vec<CommandSpec> {
                 let (w, h) = (px("width", 1920), px("height", 1080));
                 let mode = match p.get("mode").and_then(Value::as_str).unwrap_or("rgb") {
                     "gray" | "grayscale" => ColorMode::Grayscale,
-                    "cmyk" => ColorMode::Cmyk,
-                    "lab" => ColorMode::Lab,
                     _ => ColorMode::Rgb,
                 };
-                // RGB and gray documents are linear half float (or 32-bit float), see
-                // `linear_doc`; the other modes keep their integer depths.
-                let linear = crate::linear_doc::linear_profile(mode);
-                let depth = match (p.get("depth").and_then(Value::as_u64).unwrap_or(16), linear.is_some()) {
-                    (32, _) => SampleType::F32,
-                    (_, true) => SampleType::F16,
-                    (16, false) => SampleType::U16,
-                    _ => SampleType::U8,
+                // Documents are linear half float (or 32-bit float), see `linear_doc`.
+                let depth = match p.get("depth").and_then(Value::as_u64).unwrap_or(16) {
+                    32 => SampleType::F32,
+                    _ => SampleType::F16,
                 };
                 let name = p.get("name").and_then(Value::as_str).unwrap_or("Untitled").to_string();
                 let res = p.get("resolution").and_then(Value::as_f64).unwrap_or(72.0).clamp(1.0, 30_000.0) as f32;
                 let picker = s.picker_profile();
-                let pick = |c: [f32; 4]| crate::linear_doc::to_linear_color(mode, &picker, c);
+                let pick = |c: [f32; 4]| crate::linear_doc::to_linear_color(&picker, c);
                 let bgc = pick(s.tools.background);
                 let mut doc = match p.get("background").and_then(Value::as_str).unwrap_or("white") {
                     "backgroundColor" => Document::with_background(name, Size::new(w, h), mode, depth, Color::rgba(bgc[0], bgc[1], bgc[2], 1.0)),
@@ -296,9 +284,7 @@ fn build() -> Vec<CommandSpec> {
                     }
                 };
                 doc.resolution_dpi = res;
-                if let Some(lin) = linear {
-                    doc.icc_profile = Some(lin.to_bytes());
-                }
+                doc.icc_profile = Some(crate::linear_doc::linear_profile(mode).to_bytes());
                 let i = s.add_document(doc, None);
                 Ok(json!({ "document": i }))
             }
@@ -686,7 +672,6 @@ fn build() -> Vec<CommandSpec> {
         cmd!("layer.setAdjustment", "Adjustment Properties", [], None, r##"{"layer":id?, …params of that adjustment kind}"##, has_layer, |s, p| {
             let id = layer_param(s, p)?;
             s.edit("Modify Adjustment", |doc, _| {
-                let mode = doc.mode;
                 let l = doc.layer_mut(id).ok_or(EngineError::NoLayer(id))?;
                 let LayerContent::Adjustment(adj) = &mut l.content else { return Err(EngineError::Other("not an adjustment layer".into())) };
                 if matches!(adj, Adjustment::Unsupported { .. }) {
@@ -695,9 +680,9 @@ fn build() -> Vec<CommandSpec> {
                 let kind = adjustment_kind(adj);
                 // No params resets to the defaults; otherwise params merge over the current values.
                 *adj = if crate::adjust_params::user_keys(p).is_empty() {
-                    crate::adjust_params::default_for(kind, mode)?
+                    crate::adjust_params::default_for(kind)?
                 } else {
-                    crate::adjust_params::from_params(kind, p, Some(adj), mode)?
+                    crate::adjust_params::from_params(kind, p, Some(adj))?
                 };
                 Ok(())
             })?;
@@ -906,8 +891,7 @@ fn build() -> Vec<CommandSpec> {
     ];
 
     // Adjustment layers + destructive adjustments, generated from one list.
-    // Levels/Curves channel keys follow the document: red/green/blue (RGB), gray (Grayscale),
-    // cyan/magenta/yellow/black (CMYK), lightness/a/b (Lab); see `adjust_params`.
+    // Levels/Curves: the composite plus red/green/blue channel keys; see `adjust_params`.
     const ADJ: &[(&str, &str, &str)] = &[
         ("brightnessContrast", "Brightness/Contrast…", r##"{"brightness":-150..150=0,"contrast":-50..100=0,"legacy":bool=false}"##),
         (
@@ -974,7 +958,7 @@ fn build() -> Vec<CommandSpec> {
             enabled: has_doc,
             run: |s, p| {
                 let kind = p.get("__kind").and_then(Value::as_str).unwrap_or("invert").to_string();
-                let adj = crate::adjust_params::from_params(&kind, p, None, doc_mode(s))?;
+                let adj = crate::adjust_params::from_params(&kind, p, None)?;
                 new_adjustment(s, adj)
             },
             journal: true,
@@ -996,7 +980,7 @@ fn build() -> Vec<CommandSpec> {
             enabled: has_pixel_or_channel,
             run: |s, p| {
                 let kind = p.get("__kind").and_then(Value::as_str).unwrap_or("invert").to_string();
-                let adj = crate::adjust_params::from_params(&kind, p, None, doc_mode(s))?;
+                let adj = crate::adjust_params::from_params(&kind, p, None)?;
                 let label = adj.label().to_string();
                 destructive_adjust(s, &label, adj, p)
             },
@@ -1050,7 +1034,6 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::adjust_cmds::specs());
     v.extend(crate::layer_menu_cmds::specs());
     v.extend(crate::mode_cmds::specs());
-    v.extend(crate::multichannel_cmds::specs());
     v.extend(crate::pattern_cmds::specs());
     v.extend(crate::warp_cmds::specs());
     v.extend(crate::comps_cmds::specs());
@@ -1069,7 +1052,6 @@ fn build() -> Vec<CommandSpec> {
     v.extend(crate::layer_nav_cmds::specs());
     v.extend(crate::frame_cmds::specs());
     v.extend(crate::migrate_cmds::specs());
-    v.extend(crate::trap_cmds::specs());
     v.extend(crate::timeline_cmds::specs());
     v.extend(crate::video_cmds::specs());
     v.extend(crate::jobs::specs());

@@ -561,12 +561,6 @@ fn checked(app: &PhotocraftApp, id: &str) -> Option<bool> {
         return match m {
             "rgb" => Some(d.mode == ColorMode::Rgb),
             "grayscale" => Some(d.mode == ColorMode::Grayscale),
-            "cmyk" => Some(d.mode == ColorMode::Cmyk),
-            "lab" => Some(d.mode == ColorMode::Lab),
-            "multichannel" => Some(d.mode == ColorMode::Multichannel),
-            "indexedColor" => Some(d.mode == ColorMode::Indexed),
-            "bitmap" => Some(d.mode == ColorMode::Bitmap),
-            "duotone" => Some(d.mode == ColorMode::Duotone),
             "bits8" => Some(d.depth == SampleType::U8),
             // Half-float documents show under 16 Bits/Channel.
             "bits16" => Some(matches!(d.depth, SampleType::U16 | SampleType::F16)),

@@ -468,7 +468,7 @@ fn per_dab(e: f32, spacing: f32) -> f32 {
 }
 
 /// Apply an RGB colour transform `f(rgb, strength)` to each covered pixel of a dab (through straight
-/// RGBA, so it works for Gray/CMYK/Lab too; untouched pixels are never round-tripped).
+/// RGBA, so it works for Gray too; untouched pixels are never round-tripped).
 fn color_dab(fmt: &PixelFormat, work: &mut Region, fp: &Footprint, strength: f32, spacing: f32, f: impl Fn([f32; 3], f32) -> [f32; 3]) {
     let r = fp.rect.intersect(&work.rect);
     let n = fmt.channels();

@@ -184,8 +184,8 @@ fn new_filters_agree_across_bit_depths() {
 
 #[test]
 fn new_filters_work_in_other_colour_modes() {
-    for mode in [ColorMode::Grayscale, ColorMode::Cmyk, ColorMode::Lab] {
-        let f = PixelFormat::new(mode, SampleType::U8, true);
+    for (mode, sample) in [(ColorMode::Grayscale, SampleType::U8), (ColorMode::Grayscale, SampleType::F16), (ColorMode::Rgb, SampleType::F16)] {
+        let f = PixelFormat::new(mode, sample, true);
         let mut s = Surface::new(f);
         let src = pattern(SampleType::F32, R);
         for y in R.y0..R.y1 {

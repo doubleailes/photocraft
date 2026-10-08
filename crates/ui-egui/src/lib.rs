@@ -1361,13 +1361,11 @@ impl PhotocraftApp {
             let mut texs = vec![make(&|p| egui::Color32::from_rgb(p[0], p[1], p[2]), "composite")];
             if colors > 1 {
                 for k in 0..colors {
-                    let cmyk = fmt.mode == photocraft_doc::ColorMode::Cmyk;
                     texs.push(make(
                         &|p| {
                             let rgba = [p[0], p[1], p[2], 255].map(|v| f32::from(v) / 255.0);
                             let x = photocraft_raster::from_rgba(&fmt, rgba)[k];
-                            let g = if cmyk { 1.0 - x } else { x };
-                            egui::Color32::from_gray((g.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
+                            egui::Color32::from_gray((x.clamp(0.0, 1.0) * 255.0 + 0.5) as u8)
                         },
                         &format!("c{k}"),
                     ));
