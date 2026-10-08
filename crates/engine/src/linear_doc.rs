@@ -20,7 +20,7 @@ use photocraft_geom::Rect;
 use photocraft_raster::Surface;
 use serde_json::{Value, json};
 
-use crate::color_cmds::{convert_document, convert_surface, document_profile, mode_space, profile_from_bytes};
+use crate::color_cmds::{cms_err, convert_document, convert_layer_colors, convert_surface, document_profile, mode_space, profile_from_bytes};
 use crate::edit_cmds::Clip;
 use crate::{Result, Session};
 
@@ -70,23 +70,52 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
         return Ok(false);
     }
     let depth = if doc.depth == SampleType::F32 { SampleType::F32 } else { SampleType::F16 };
-    // Through 32-bit float, so 16-bit sources keep their precision until the final rounding.
-    let mut work = doc.clone();
+    // The only step that can fail comes first: a failed conversion leaves the document as it was.
+    let t = Transform::new(&document_profile(doc), lin, Intent::RelativeColorimetric, false).map_err(cms_err)?;
+    // From here on the document changes in place (no copy of it is made). Everything is
+    // infallible.
+    let mode = doc.mode;
     if !doc.depth.is_float() {
-        work.source_depth = Some(doc.depth);
+        doc.source_depth = Some(doc.depth);
     }
-    set_document_depth(&mut work, SampleType::F32);
-    convert_document(&mut work, lin, Intent::RelativeColorimetric, false)?;
-    set_document_depth(&mut work, depth);
+    // Colour pixels go through the float path, so 16-bit sources keep their precision until the
+    // final rounding. Masks and channels only change depth (they hold no colour).
+    crate::image_cmds::for_each_surface(&mut doc.layers, true, &mut |surf, is_mask| {
+        *surf = if is_mask { surf.convert(surf.format().with_sample(depth)) } else { linearize_surface(surf, mode, &t, depth) };
+    });
+    for ch in doc.channels.iter_mut().chain(doc.quick_mask.as_mut()) {
+        ch.surface = ch.surface.convert(ch.surface.format().with_sample(depth));
+    }
+    for l in &mut doc.layers {
+        convert_layer_colors(l, mode, mode, &t);
+    }
+    doc.depth = depth;
+    doc.icc_profile = Some(lin.to_bytes());
     // Shapes re-render as any edit would (their anti-aliased edges now blend in linear light);
     // text and smart objects keep their converted pixels, which may be Photoshop's own.
-    let snapshot = work.clone();
-    refresh_shapes(&snapshot, &mut work.layers);
+    let mut layers = std::mem::take(&mut doc.layers);
+    refresh_shapes(doc, &mut layers);
+    doc.layers = layers;
     // The document's own patterns (pattern fills and overlays read them) are encoded like the
     // file's pixels: linear too.
-    work.patterns = work.patterns.iter().map(|p| pattern_for(p, &snapshot)).collect();
-    *doc = work;
+    let patterns: Vec<Pattern> = doc.patterns.iter().map(|p| pattern_for(p, doc)).collect();
+    doc.patterns = patterns;
     Ok(true)
+}
+
+/// `s` (pixels in the document's encoded profile, `mode`) as linear pixels of `depth`. The
+/// work goes through 32-bit float, one tile at a time in parallel, so 16-bit sources keep their
+/// precision until the final rounding.
+fn linearize_surface(s: &Surface, mode: ColorMode, t: &Transform, depth: SampleType) -> Surface {
+    let wide: Surface;
+    let src: &Surface = if s.format().sample == SampleType::F32 {
+        s
+    } else {
+        wide = s.convert(s.format().with_sample(SampleType::F32));
+        &wide
+    };
+    let linear = convert_surface(src, mode, src.format(), t);
+    if depth == SampleType::F32 { linear } else { linear.convert(linear.format().with_sample(depth)) }
 }
 
 fn refresh_shapes(doc: &Document, layers: &mut [photocraft_doc::Layer]) {

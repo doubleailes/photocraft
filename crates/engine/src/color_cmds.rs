@@ -395,7 +395,7 @@ fn merge(mut a: Value, b: Value) -> Value {
     a
 }
 
-fn cms_err(e: photocraft_cms::CmsError) -> EngineError {
+pub(crate) fn cms_err(e: photocraft_cms::CmsError) -> EngineError {
     EngineError::Other(format!("colour management: {e}"))
 }
 
@@ -584,7 +584,7 @@ fn convert_fill(f: &mut Fill, from: ColorMode, to: ColorMode, t: &Transform) {
     }
 }
 
-fn convert_layer_colors(l: &mut Layer, from: ColorMode, to: ColorMode, t: &Transform) {
+pub(crate) fn convert_layer_colors(l: &mut Layer, from: ColorMode, to: ColorMode, t: &Transform) {
     let mut cc = |c: &mut Color| convert_color(c, from, to, t);
     let mut touched_fx = false;
     for e in &mut l.effects.items {
