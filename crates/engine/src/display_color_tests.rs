@@ -15,13 +15,15 @@ const TOL: f32 = 2.0;
 
 fn rgb_doc(profile: Option<&Profile>, rgb: [f32; 3], depth: SampleType) -> Document {
     let mut d = Document::with_background("t", Size::new(8, 8), ColorMode::Rgb, depth, Color::rgb(rgb[0], rgb[1], rgb[2]));
-    d.icc_profile = profile.map(Profile::to_bytes);
+    if let Some(p) = profile {
+        crate::color_cmds::tag_with_profile(&mut d, p);
+    }
     d
 }
 
 fn gray_doc(profile: &Profile, v: f32) -> Document {
     let mut d = Document::with_background("t", Size::new(8, 8), ColorMode::Grayscale, SampleType::U8, Color::gray(v));
-    d.icc_profile = Some(profile.to_bytes());
+    crate::color_cmds::tag_with_profile(&mut d, profile);
     d
 }
 
@@ -130,8 +132,7 @@ fn exr_round_trip_is_linear() {
     let d = rgb_doc(None, [0.5, 0.25, 0.75], SampleType::F32);
     let r = photocraft_io::export(&d, "x.exr", &photocraft_io::ExportOptions::default()).unwrap();
     let back = photocraft_io::import("x.exr", &r.bytes).unwrap().document;
-    let icc = back.icc_profile.clone().expect("tagged");
-    assert_eq!(Profile::parse(&icc).unwrap().content_hash(), Builtin::LinearSrgb.profile().content_hash());
+    assert_eq!(back.color_space, photocraft_color::space::LINEAR, "tagged linear");
     let v = back.layers[0].surface().unwrap().pixel(1, 1);
     assert!((v[0] - 0.214).abs() < 2e-3, "stored linear: {v:?}");
     assert!(close(shown(&s, &back), shown(&s, &d), 1.0));

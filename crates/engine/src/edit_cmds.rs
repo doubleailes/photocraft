@@ -193,7 +193,7 @@ fn new_from_clipboard(s: &mut Session) -> Result<Value> {
     let profile = s.clip_profile(&clip);
     let moved = if b.x0 == 0 && b.y0 == 0 { clip.surface } else { photocraft_algo::resample::translate_surface(&clip.surface, -b.x0, -b.y0) };
     let mut doc = Document::new("Untitled", photocraft_geom::Size::new(w, h), fmt.mode, fmt.sample);
-    doc.icc_profile = Some(profile.to_bytes());
+    crate::color_cmds::tag_with_profile(&mut doc, &profile);
     let mut l = Layer::raster(doc.next_layer_name("Layer"), target);
     *crate::pixels_mut(&mut l)? = if moved.format() == target { moved } else { moved.convert(target) };
     doc.layers.push(l);

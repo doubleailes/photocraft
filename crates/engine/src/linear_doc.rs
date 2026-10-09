@@ -71,7 +71,8 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
     }
     let depth = if doc.depth == SampleType::F32 { SampleType::F32 } else { SampleType::F16 };
     // The only step that can fail comes first: a failed conversion leaves the document as it was.
-    let t = Transform::new(&document_profile(doc), lin, Intent::RelativeColorimetric, false).map_err(cms_err)?;
+    let src_profile = document_profile(doc);
+    let t = Transform::new(&src_profile, lin, Intent::RelativeColorimetric, false).map_err(cms_err)?;
     // From here on the document changes in place (no copy of it is made). Everything is
     // infallible.
     let mode = doc.mode;
@@ -90,7 +91,13 @@ pub(crate) fn to_linear(doc: &mut Document) -> Result<bool> {
         convert_layer_colors(l, mode, mode, &t);
     }
     doc.depth = depth;
-    doc.icc_profile = Some(lin.to_bytes());
+    // The space the pixels came from stays as the document's source space.
+    if doc.source_space.is_empty()
+        && let Some(n) = photocraft_color::space::name_for_profile(&src_profile)
+    {
+        doc.source_space = n.to_string();
+    }
+    crate::color_cmds::tag_with_profile(doc, lin);
     // Shapes re-render as any edit would (their anti-aliased edges now blend in linear light);
     // text and smart objects keep their converted pixels, which may be Photoshop's own.
     let mut layers = std::mem::take(&mut doc.layers);

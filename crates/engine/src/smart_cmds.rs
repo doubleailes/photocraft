@@ -532,7 +532,7 @@ pub fn layer_to_smart(doc: &Document, l: &Layer) -> Result<Layer> {
     }
     let mut sub = Document::new(format!("{}.pcraft", l.name), doc.size, doc.mode, doc.depth);
     sub.resolution_dpi = doc.resolution_dpi;
-    sub.icc_profile = doc.icc_profile.clone();
+    crate::color_cmds::copy_space(&mut sub, doc);
     sub.global_light = doc.global_light;
     if any_layer(l, &|x| matches!(x.content, LayerContent::Smart(_))) {
         // Nested PSD placed layers find their embedded files here.

@@ -291,7 +291,7 @@ pub fn web_document(doc: &Document, p: &Value, st: &WebSettings) -> Result<(Docu
     if mode != photocraft_color::ColorMode::Rgb {
         tmp.execute("image.mode.rgb", json!({}))?;
     }
-    if st.convert_to_srgb && doc.icc_profile.is_some() {
+    if st.convert_to_srgb && crate::color_cmds::is_tagged(doc) {
         // Documents without a profile are treated as sRGB already.
         tmp.execute("edit.convertToProfile", json!({"profile": "srgb", "intent": "perceptual"}))?;
     }
@@ -714,7 +714,8 @@ fn save_for_web(s: &mut Session, p: &Value) -> Result<Value> {
     let (wdoc, sx, sy) = web_document(&doc, p, &st)?;
     let buf = photocraft_compose::flatten(&wdoc);
     let bw = wdoc.size.width as usize;
-    let icc = wdoc.icc_profile.as_deref().map(|v| v.as_slice());
+    let icc_bytes = crate::color_cmds::embedded_icc(&wdoc);
+    let icc = icc_bytes.as_deref().map(|v| v.as_slice());
     let xmp = web_xmp(&doc, st.metadata);
     let dpi = wdoc.resolution_dpi;
     let all = slices::resolve(&doc);
@@ -917,7 +918,7 @@ fn quick_export(s: &mut Session, p: &Value) -> Result<Value> {
         wdoc.size.width as usize,
         wdoc.bounds(),
         &st,
-        wdoc.icc_profile.as_deref().map(|v| v.as_slice()),
+        crate::color_cmds::embedded_icc(&wdoc).as_deref().map(|v| v.as_slice()),
         xmp.as_deref(),
         wdoc.resolution_dpi,
         false,

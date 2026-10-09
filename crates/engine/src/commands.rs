@@ -284,7 +284,7 @@ fn build() -> Vec<CommandSpec> {
                     }
                 };
                 doc.resolution_dpi = res;
-                doc.icc_profile = Some(crate::linear_doc::linear_profile(mode).to_bytes());
+                crate::color_cmds::tag_with_profile(&mut doc, crate::linear_doc::linear_profile(mode));
                 let i = s.add_document(doc, None);
                 Ok(json!({ "document": i }))
             }

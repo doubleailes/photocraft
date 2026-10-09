@@ -3,7 +3,6 @@
 //! profile), or, for raw variants not decoded yet, the camera's embedded
 //! JPEG preview with a warning.
 
-use std::sync::Arc;
 
 use photocraft_codecs::{self as codecs, ChannelLayout, Format, Image};
 use photocraft_raw::{DevelopOptions, Limits, RawError};
@@ -45,7 +44,9 @@ pub fn import_raw_with(name: &str, bytes: &[u8], opts: &DevelopOptions) -> Resul
         Ok(dev) => {
             let img = Image::from_u16(dev.width, dev.height, ChannelLayout::Rgb, &dev.rgb)?;
             let mut r = image_to_document(name, &img)?;
-            r.document.icc_profile = Some(Arc::new(photocraft_cms::Builtin::ProPhotoCompat.profile().to_bytes().to_vec()));
+            let pro = photocraft_color::space::canonical("prophoto-compat").unwrap_or(photocraft_color::space::SRGB);
+            r.document.color_space = pro.to_string();
+            r.document.source_space = pro.to_string();
             // "Canon" + "Canon EOS 80D" reads as "Canon EOS 80D".
             let camera = match (dev.info.make.as_deref(), dev.info.model.as_deref()) {
                 (Some(make), Some(model)) if model.to_ascii_lowercase().starts_with(&make.to_ascii_lowercase()) => model.to_string(),

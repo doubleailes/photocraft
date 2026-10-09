@@ -605,7 +605,7 @@ mod tests {
     fn depth_changes_keep_the_values_of_float_files_tagged_srgb() {
         // A 32-bit file tagged sRGB holds linear values (Photoshop embeds the working profile).
         let mut d = Document::with_background("f", Size::new(4, 4), ColorMode::Rgb, SampleType::F32, photocraft_doc::Color::rgb(0.5, 0.5, 0.5));
-        d.icc_profile = Some(photocraft_cms::Builtin::Srgb.profile().to_bytes());
+        crate::color_cmds::tag_with_profile(&mut d, photocraft_cms::Builtin::Srgb.profile());
         let mut s = Session::new();
         s.add_document(d, None);
         let v = |s: &Session| s.active().unwrap().doc.layers[0].surface().unwrap().pixel(1, 1)[0];

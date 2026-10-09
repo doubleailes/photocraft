@@ -37,6 +37,7 @@ mod multichannel_map;
 mod native;
 pub mod pattern_map;
 mod pixels;
+mod spaces;
 mod psd_export;
 mod psd_import;
 pub mod raw;

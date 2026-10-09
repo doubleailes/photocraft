@@ -2,9 +2,13 @@
 //! Profile), CMS-based Image › Mode conversions, soft proofing (View › Proof Setup / Proof
 //! Colors / Gamut Warning) and the display transform the canvas applies.
 //!
-//! Document space: `Document::icc_profile` holds the document's ICC bytes (kept byte-exact
-//! from PSD resource 1039 / PNG iCCP / JPEG APP2 / TIFF). `None` means untagged: the working
-//! profile of the mode is assumed (sRGB, sGray).
+//! Document space: `Document::color_space` names the space the pixels are in
+//! (`photocraft_color::space`, an OCIO colour space name); the built-in ICC profile behind the
+//! name drives the conversions until ICC goes (phase 8). Empty means untagged: the working
+//! profile of the mode is assumed (sRGB, sGray). A file as read may instead carry an embedded
+//! profile with no named space (`Document::metadata.icc`), which the import door converts from.
+//! ICC files are not document spaces (until ocio-rs #8): Assign/Convert to Profile and the
+//! working RGB/gray spaces take named spaces only; proof and monitor profiles stay ICC.
 //!
 //! Documents are RGB or grayscale and composite in document space. CMYK remains a proofing
 //! target (View › Proof Setup, the working CMYK space); files in CMYK or Lab are converted when
@@ -179,6 +183,10 @@ pub fn validate_settings(c: &ColorSettings) -> std::result::Result<(), String> {
         if p.color_space != space {
             return Err(format!("working space `{spec}` is {:?}, not {space:?}", p.color_space));
         }
+        // Documents are tagged with the working RGB/gray space: it must be a named space.
+        if space != ColorSpace::Cmyk && photocraft_color::space::name_for_profile(&p).is_none() {
+            return Err(format!("working space `{spec}` is not a document colour space (ICC files can't be one until ocio-rs #8)"));
+        }
     }
     let m = c.monitor_profile.as_str();
     if !(m.is_empty() || m == "auto") {
@@ -251,7 +259,7 @@ impl ColorState {
         let space = mode_space(doc.mode);
         let working = self.working(doc.mode);
         let policy = self.settings.policy(doc.mode);
-        let embedded = doc.icc_profile.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == space);
+        let embedded = is_tagged(doc).then(|| document_profile(doc)).filter(|p| p.color_space == space);
         match embedded {
             Some(emb) => {
                 // Compared by colour, not bytes: Photoshop's sRGB IEC61966-2.1 is our working sRGB.
@@ -266,7 +274,7 @@ impl ColorState {
                 let action = match policy {
                     Policy::Preserve => "kept",
                     Policy::Off => {
-                        doc.icc_profile = None;
+                        untag(doc);
                         "discarded"
                     }
                     Policy::Convert => match convert_document(doc, &working, self.settings.intent(), self.settings.bpc) {
@@ -282,7 +290,7 @@ impl ColorState {
                 let default = working_profile(doc.mode);
                 let assign = policy != Policy::Off && working.content_hash() != default.content_hash();
                 if assign {
-                    doc.icc_profile = Some(working.to_bytes());
+                    tag_with_profile(doc, &working);
                 }
                 json!({"action": if assign { "assigned" } else { "untagged" }, "working": working.description, "policy": policy.id(), "ask": self.settings.ask_on_missing, "missing": true})
             }
@@ -447,14 +455,116 @@ pub fn profile_from_bytes(bytes: &Arc<Vec<u8>>) -> std::result::Result<Arc<Profi
     Ok(p)
 }
 
-/// The document's profile: its embedded profile when it parses and matches the mode,
-/// otherwise the mode's working profile.
+/// The profile of the document's pixels: its named space's (or, for a file as read, its
+/// unnamed embedded profile) when that exists for the mode, otherwise the mode's working
+/// profile.
 pub fn document_profile(doc: &Document) -> Arc<Profile> {
-    doc.icc_profile
-        .as_ref()
-        .and_then(|b| profile_from_bytes(b).ok())
-        .filter(|p| p.color_space == mode_space(doc.mode))
-        .unwrap_or_else(|| working_profile(doc.mode))
+    if let Some(p) = doc.metadata.icc.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == mode_space(doc.mode)) {
+        return p;
+    }
+    space_profile(&doc.color_space, doc.mode).unwrap_or_else(|| working_profile(doc.mode))
+}
+
+/// The built-in profile of named space `name` for `mode`, shared per process.
+pub fn space_profile(name: &str, mode: ColorMode) -> Option<Arc<Profile>> {
+    type Cache = Mutex<HashMap<(String, ColorMode), Arc<Profile>>>;
+    static CACHE: std::sync::OnceLock<Cache> = std::sync::OnceLock::new();
+    let key = (photocraft_color::space::canonical(name)?.to_string(), mode);
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(p) = cache.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+        return Some(p.clone());
+    }
+    let p = Arc::new(photocraft_color::space::profile(name, mode)?.clone());
+    cache.lock().unwrap_or_else(|e| e.into_inner()).insert(key, p.clone());
+    Some(p)
+}
+
+/// Does `doc` say what space it is in (a named space, or a file's unnamed profile)?
+pub fn is_tagged(doc: &Document) -> bool {
+    !doc.color_space.is_empty() || doc.metadata.icc.is_some()
+}
+
+/// Untag `doc`: its pixels are then taken to be in the working space.
+pub fn untag(doc: &mut Document) {
+    doc.color_space.clear();
+    doc.metadata.icc = None;
+}
+
+/// Tag `doc`'s pixels as being in `p`: its named space, or (a profile with no named space,
+/// which only a file as read has) the profile itself.
+pub fn tag_with_profile(doc: &mut Document, p: &Profile) {
+    match photocraft_color::space::name_for_profile(p) {
+        Some(n) => {
+            doc.color_space = n.to_string();
+            doc.metadata.icc = None;
+        }
+        None => {
+            doc.color_space.clear();
+            doc.metadata.icc = Some(p.to_bytes());
+        }
+    }
+}
+
+/// A document's colour space tags (pixel space, source space, unnamed embedded profile), to
+/// carry from one document to another.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SpaceTag {
+    pub color_space: String,
+    pub source_space: String,
+    pub icc: Option<Arc<Vec<u8>>>,
+}
+
+impl SpaceTag {
+    pub fn of(doc: &Document) -> Self {
+        Self { color_space: doc.color_space.clone(), source_space: doc.source_space.clone(), icc: doc.metadata.icc.clone() }
+    }
+
+    pub fn apply(&self, doc: &mut Document) {
+        doc.color_space = self.color_space.clone();
+        doc.source_space = self.source_space.clone();
+        doc.metadata.icc = self.icc.clone();
+    }
+}
+
+/// Tag `doc` (a file as read) with embedded ICC bytes: their named space, else the profile
+/// itself. Bytes that don't parse, or describe another colour model, are ignored.
+pub fn tag_from_icc(doc: &mut Document, icc: &[u8]) {
+    if let Ok(p) = Profile::parse(icc)
+        && p.color_space == mode_space(doc.mode)
+    {
+        tag_with_profile(doc, &p);
+        if let Some(n) = photocraft_color::space::name_for_profile(&p) {
+            doc.source_space = n.to_string();
+        }
+    }
+}
+
+/// Give `dst` the colour space of `src` (pixel space, source space, unnamed profile).
+pub fn copy_space(dst: &mut Document, src: &Document) {
+    SpaceTag::of(src).apply(dst);
+}
+
+/// The ICC profile describing `doc`'s pixels, for files and printers: `None` when untagged.
+pub fn embedded_icc(doc: &Document) -> Option<Arc<Vec<u8>>> {
+    if let Some(b) = &doc.metadata.icc {
+        return Some(b.clone());
+    }
+    space_profile(&doc.color_space, doc.mode).map(|p| p.to_bytes())
+}
+
+/// Are `a`'s and `b`'s pixels in the same space?
+pub fn same_space(a: &Document, b: &Document) -> bool {
+    a.color_space == b.color_space && a.metadata.icc == b.metadata.icc
+}
+
+/// A profile that can be a document's space: one of the named spaces (ICC files can't be,
+/// until ocio-rs #8 maps them to OCIO spaces).
+fn named_profile(cmd: &str, p: &Profile) -> Result<()> {
+    if photocraft_color::space::name_for_profile(p).is_some() {
+        return Ok(());
+    }
+    let names: Vec<&str> = photocraft_color::space::SPACES.iter().map(|s| s.name).collect();
+    Err(EngineError::BadParams { cmd: cmd.into(), msg: format!("`{}` is not a document colour space (one of: {})", p.description, names.join(", ")) })
 }
 
 /// Profile describing the compositor's RGB output for this document (see the module docs).
@@ -658,7 +768,7 @@ pub fn convert_document(doc: &mut Document, dst: &Profile, intent: Intent, bpc: 
         // Preserved PSD blocks describing colours in the old mode no longer apply.
     }
     doc.mode = to_mode;
-    doc.icc_profile = Some(dst.to_bytes());
+    tag_with_profile(doc, dst);
     Ok(())
 }
 
@@ -721,24 +831,26 @@ fn assign_profile(s: &mut Session, p: &Value) -> Result<Value> {
     let spec =
         p.get("profile").and_then(Value::as_str).ok_or_else(|| EngineError::BadParams { cmd: "edit.assignProfile".into(), msg: "missing `profile`".into() })?;
     let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
-    let bytes = if spec == "none" {
+    let prof = if spec == "none" {
         None
     } else {
         let prof = s.color.resolve(spec, Some(doc), None)?;
         if prof.color_space != mode_space(doc.mode) {
             return Err(EngineError::Other(format!("profile `{}` is {:?}; the document is {:?}", prof.description, prof.color_space, doc.mode)));
         }
-        Some(prof.to_bytes())
+        named_profile("edit.assignProfile", &prof)?;
+        Some(prof)
     };
-    let desc = match &bytes {
-        Some(b) => profile_from_bytes(b).map(|p| p.description.clone()).unwrap_or_default(),
-        None => "none".into(),
-    };
+    let desc = prof.as_ref().map_or_else(|| "none".to_string(), |p| p.description.clone());
     s.edit("Assign Profile", |doc, _| {
-        doc.icc_profile = bytes;
+        match &prof {
+            Some(p) => tag_with_profile(doc, p),
+            None => untag(doc),
+        }
         Ok(())
     })?;
-    Ok(json!({ "profile": desc }))
+    let d = &s.active().ok_or(EngineError::NoDocument)?.doc;
+    Ok(json!({ "profile": desc, "colorSpace": d.color_space }))
 }
 
 fn convert_to_profile(s: &mut Session, p: &Value) -> Result<Value> {
@@ -748,11 +860,12 @@ fn convert_to_profile(s: &mut Session, p: &Value) -> Result<Value> {
         .ok_or_else(|| EngineError::BadParams { cmd: "edit.convertToProfile".into(), msg: "missing `profile`".into() })?;
     let doc = &s.active().ok_or(EngineError::NoDocument)?.doc;
     let dst = s.color.resolve(spec, Some(doc), None)?;
+    named_profile("edit.convertToProfile", &dst)?;
     let intent = intent_or(p, s.color.settings.intent())?;
     let bpc = bool_param(p, "bpc", s.color.settings.bpc);
     s.edit("Convert to Profile", |doc, _| convert_document(doc, &dst, intent, bpc))?;
     let d = &s.active().ok_or(EngineError::NoDocument)?.doc;
-    Ok(json!({ "profile": dst.description, "mode": format!("{:?}", d.mode), "intent": intent.id(), "bpc": bpc }))
+    Ok(json!({ "profile": dst.description, "colorSpace": d.color_space, "mode": format!("{:?}", d.mode), "intent": intent.id(), "bpc": bpc }))
 }
 
 fn profile_info(s: &mut Session, p: &Value) -> Result<Value> {
@@ -766,7 +879,9 @@ fn profile_info(s: &mut Session, p: &Value) -> Result<Value> {
         }
         None => doc.as_deref().map(|d| {
             let mut j = profile_json(&document_profile(d));
-            j["embedded"] = json!(d.icc_profile.is_some());
+            j["embedded"] = json!(is_tagged(d));
+            j["space"] = json!(d.color_space);
+            j["sourceSpace"] = json!(d.source_space);
             j
         }),
     };
@@ -917,7 +1032,7 @@ fn profile_mismatch(s: &mut Session, p: &Value) -> Result<Value> {
         }
         "discard" | "off" => {
             s.edit("Discard Profile", |doc, _| {
-                doc.icc_profile = None;
+                untag(doc);
                 Ok(())
             })?;
             Ok(json!({"action": "discarded"}))
@@ -925,7 +1040,7 @@ fn profile_mismatch(s: &mut Session, p: &Value) -> Result<Value> {
         "assignWorking" => {
             let w = s.color.working(mode);
             s.edit("Assign Profile", |doc, _| {
-                doc.icc_profile = Some(w.to_bytes());
+                tag_with_profile(doc, &w);
                 Ok(())
             })?;
             Ok(json!({"action": "assigned", "profile": w.description}))
@@ -1110,7 +1225,7 @@ mod tests {
         s.execute("edit.convertToProfile", json!({"profile": "sgray", "intent": "perceptual"})).unwrap();
         assert_eq!(doc(&s).mode, ColorMode::Grayscale);
         s.execute("edit.assignProfile", json!({"profile": "none"})).unwrap();
-        assert!(doc(&s).icc_profile.is_none());
+        assert!(!is_tagged(doc(&s)));
         let info = s.execute("edit.profileInfo", json!({})).unwrap();
         assert_eq!(info["profile"]["colorSpace"], "Gray");
         assert!(info["builtins"].as_array().unwrap().len() >= 10);
@@ -1219,12 +1334,12 @@ mod settings_tests {
     /// Color Settings policies show as they act (integer files are linearised afterwards).
     fn tagged(spec: &str) -> Document {
         let mut d = Document::with_background("t", photocraft_doc::Size::new(8, 8), ColorMode::Rgb, SampleType::F32, Color::rgba(0.2, 0.6, 0.9, 1.0));
-        d.icc_profile = Some(Builtin::from_id(spec).unwrap().profile().to_bytes());
+        tag_with_profile(&mut d, Builtin::from_id(spec).unwrap().profile());
         d
     }
 
     fn desc(d: &Document) -> Option<String> {
-        d.icc_profile.as_ref().map(|b| profile_from_bytes(b).unwrap().description.clone())
+        is_tagged(d).then(|| document_profile(d).description.clone())
     }
 
     #[test]
@@ -1268,10 +1383,11 @@ mod settings_tests {
         let bytes = v2.with_encoded_bytes().to_bytes();
         assert_ne!(bytes, Builtin::Srgb.profile().to_bytes());
         let mut d = tagged("srgb");
-        d.icc_profile = Some(bytes.clone());
+        tag_from_icc(&mut d, &bytes);
+        assert_eq!(d.color_space, photocraft_color::space::SRGB, "Photoshop's sRGB bytes are the named sRGB space");
         let (_, r) = s.open_document(d, None);
         assert_eq!((r["action"].as_str(), r["mismatch"].as_bool(), r.get("ask")), (Some("kept"), Some(false), None));
-        assert_eq!(s.active().unwrap().doc.icc_profile.as_ref(), Some(&bytes));
+        assert_eq!(s.active().unwrap().doc.color_space, photocraft_color::space::SRGB, "float files keep their values and space");
         // A 32-bit document in Photoshop's linear sRGB (a v2 profile recording the D65 display
         // white) stays linear without asking, like one tagged with our own linear sRGB.
         let mut lin = Builtin::LinearSrgb.profile().clone();
@@ -1280,10 +1396,11 @@ mod settings_tests {
         let bytes = lin.with_encoded_bytes().to_bytes();
         assert_ne!(bytes, Builtin::LinearSrgb.profile().to_bytes());
         let mut d = Document::with_background("t", photocraft_doc::Size::new(8, 8), ColorMode::Rgb, SampleType::F32, Color::rgba(0.2, 0.6, 0.9, 1.0));
-        d.icc_profile = Some(bytes.clone());
+        tag_from_icc(&mut d, &bytes);
+        assert_eq!(d.color_space, photocraft_color::space::LINEAR, "Photoshop's linear sRGB is the named linear space");
         let (_, r) = s.open_document(d, None);
         assert_eq!((r["action"].as_str(), r.get("ask")), (Some("kept"), None));
-        assert_eq!(s.active().unwrap().doc.icc_profile.as_ref(), Some(&bytes));
+        assert_eq!(s.active().unwrap().doc.color_space, photocraft_color::space::LINEAR);
         s.execute("edit.colorSettings", json!({"policyRgb": "preserve"})).unwrap();
         // Convert to working: pixels converted and the document tagged with sRGB.
         s.execute("edit.colorSettings", json!({"policyRgb": "convert"})).unwrap();
@@ -1296,11 +1413,11 @@ mod settings_tests {
         s.execute("edit.colorSettings", json!({"policyRgb": "off"})).unwrap();
         let (_, r) = s.open_document(tagged("display-p3"), None);
         assert_eq!(r["action"], "discarded");
-        assert!(s.active().unwrap().doc.icc_profile.is_none());
+        assert!(!is_tagged(&s.active().unwrap().doc));
         // Untagged files are assumed to be in a non-default working space and tagged with it.
         s.execute("edit.colorSettings", json!({"policyRgb": "preserve", "workingRgb": "display-p3"})).unwrap();
         let mut d = tagged("srgb");
-        d.icc_profile = None;
+        untag(&mut d);
         let (_, r) = s.open_document(d, None);
         assert_eq!(r["action"], "assigned");
         assert_eq!(desc(&s.active().unwrap().doc).as_deref(), Some("Display P3"));
@@ -1341,7 +1458,7 @@ mod settings_tests {
         assert!(desc(&s.active().unwrap().doc).unwrap().starts_with("sRGB"));
         s.undo();
         s.execute("color.profileMismatch", json!({"action": "discard"})).unwrap();
-        assert!(s.active().unwrap().doc.icc_profile.is_none());
+        assert!(!is_tagged(&s.active().unwrap().doc));
         assert!(s.execute("color.profileMismatch", json!({"action": "explode"})).is_err());
     }
 }

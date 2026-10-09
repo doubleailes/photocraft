@@ -81,7 +81,7 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
     // The copies, bottom to top, in a scratch document of the source's colour so they convert
     // the way a whole document does.
     let mut copies = Document::new("", sdoc.size, sdoc.mode, sdoc.depth);
-    copies.icc_profile = sdoc.icc_profile.clone();
+    crate::color_cmds::copy_space(&mut copies, &sdoc);
     // Type re-lays out at the source's resolution, so it keeps its size in pixels.
     copies.resolution_dpi = sdoc.resolution_dpi;
     for id in &ids {
@@ -94,7 +94,7 @@ fn copy_to_document(s: &mut Session, p: &Value) -> Result<Value> {
         }
         copies.layers.push(l);
     }
-    if (copies.mode, &copies.icc_profile) != (ddoc.mode, &ddoc.icc_profile) {
+    if copies.mode != ddoc.mode || !crate::color_cmds::same_space(&copies, &ddoc) {
         let profile = crate::color_cmds::document_profile(&ddoc);
         crate::color_cmds::convert_document(&mut copies, &profile, s.color.settings.intent(), s.color.settings.bpc)?;
     }

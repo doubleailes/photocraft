@@ -178,8 +178,12 @@ A typical agent loop:
 intents, black point compensation). It ships CC0 built-in profiles, including a synthetic
 "Photocraft Coated CMYK", because Adobe's CMYK profiles are proprietary (see `crates/cms/README.md`).
 
-- Documents carry an optional embedded ICC profile (`Document::icc_profile`); `edit.assignProfile`
-  and `edit.convertToProfile` change it. Mode changes (`image.mode.*`) convert through cms.
+- Documents name their colour space (`Document::color_space`, an OCIO colour space name from
+  `photocraft_color::space`, each backed by a built-in ICC profile until phase 8 of
+  `docs/ocio-migration.md`); `edit.assignProfile` and `edit.convertToProfile` change it and take
+  named spaces only. A file's embedded profile with no named space waits in
+  `Document::metadata.icc` until the import door converts from it. Mode changes (`image.mode.*`)
+  convert through cms.
 - **Proof Colors** (⌘Y), **Proof Setup** and **Gamut Warning** (⇧⌘Y) bake a 3D LUT
   (`cms::Lut3d`) that the canvas shader applies; the document pixels never change.
 - Convert colours with `photocraft_cms::transform::cached(src, dst, opts)`: transforms are cached

@@ -48,7 +48,9 @@ pub fn rich_doc(mode: ColorMode, depth: SampleType) -> Document {
     let hdr = depth == SampleType::F32;
     let mut d = Document::with_background("Rich", Size::new(300, 280), mode, depth, Color::WHITE);
     d.resolution_dpi = 300.0;
-    d.icc_profile = Some(blob(1, 500));
+    d.color_space = photocraft_color::space::LINEAR.into();
+    d.source_space = "sRGB Encoded P3-D65".into();
+    d.ocio_config = "ocio://cg-config-latest".into();
     let pf = d.pixel_format();
 
     let mut paint = Layer::raster("Paint", pf);

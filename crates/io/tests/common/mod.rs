@@ -185,7 +185,13 @@ pub fn gen_doc(mode: ColorMode, depth: SampleType, f: Features) -> Document {
 
     if f.extras {
         d.resolution_dpi = 300.0;
-        d.icc_profile = Some(Arc::new(vec![1, 2, 3, 4]));
+        // A space the file can carry for this mode and depth (float files read back linear).
+        d.color_space = match (mode, depth.is_float()) {
+            (_, true) => photocraft_color::space::LINEAR,
+            (ColorMode::Grayscale, false) => "Gamma 2.2 Encoded Rec.709",
+            (_, false) => "sRGB Encoded P3-D65",
+        }
+        .into();
         d.metadata.xmp = Some("<x:xmpmeta/>".into());
         d.metadata.exif = Some(Arc::new(b"MM\0*\0\0\0\x08".to_vec()));
         d.metadata.psd_resources.push((4000, String::new(), Arc::new(vec![9, 9, 9])));
@@ -284,7 +290,8 @@ pub fn assert_docs_eq(a: &Document, b: &Document) {
     assert_eq!(a.mode, b.mode);
     assert_eq!(a.depth, b.depth);
     assert!((a.resolution_dpi - b.resolution_dpi).abs() < 1e-3, "dpi");
-    assert_eq!(a.icc_profile, b.icc_profile, "icc");
+    assert_eq!(a.color_space, b.color_space, "colour space");
+    assert_eq!(a.metadata.icc, b.metadata.icc, "unnamed profile");
     assert_eq!(a.metadata, b.metadata, "metadata");
     assert_eq!(a.guides, b.guides, "guides");
     assert_eq!(a.channels.len(), b.channels.len(), "alpha channels");

@@ -22,7 +22,7 @@ fn contents(doc: &Document, sm: &SmartObject, intent: Intent, bpc: bool) -> Resu
     let (name, bytes) = source_bytes(&doc.metadata, &sm.source).ok_or_else(|| other("the smart object's contents are unavailable (missing linked file?)"))?;
     let mut src = super::decode_for(&name, &bytes, doc.pixel_format())?;
     let mode = doc.pixel_format().mode;
-    if src.pixel_format().mode != mode || src.icc_profile != doc.icc_profile {
+    if src.pixel_format().mode != mode || !crate::color_cmds::same_space(&src, doc) {
         crate::color_cmds::convert_document(&mut src, &crate::color_cmds::document_profile(doc), intent, bpc)?;
         if src.pixel_format().mode != mode {
             return Err(other(format!("can't convert the smart object's contents to the document's {:?} mode", doc.mode)));

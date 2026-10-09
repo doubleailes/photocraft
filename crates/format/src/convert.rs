@@ -100,6 +100,19 @@ fn surface_m(s: &Surface, sink: &mut dyn Sink) -> SurfaceM {
     SurfaceM { format: f, default: hex(&dp), tiles: s.tiles().map(|(c, t)| TileRef { tx: c.tx, ty: c.ty, hash: sink.tile(f, t) }).collect() }
 }
 
+/// The colour space of a document saved before phase 3 with ICC bytes `icc`: the named space
+/// with the same colours. A profile with no named equivalent leaves it empty (the profile
+/// itself is then kept in `Metadata::icc`).
+fn legacy_space(icc: Option<&Vec<u8>>, depth: photocraft_color::SampleType) -> String {
+    let named = icc.and_then(|b| photocraft_cms::Profile::parse(b).ok()).and_then(|p| photocraft_color::space::name_for_profile(&p));
+    match named {
+        Some(n) => n.to_string(),
+        // Float documents hold linear values whatever profile they carry.
+        None if depth.is_float() && icc.is_some() => photocraft_color::space::LINEAR.to_string(),
+        None => String::new(),
+    }
+}
+
 fn opt_blob(b: &Option<Arc<Vec<u8>>>, sink: &mut dyn Sink) -> Option<Hash> {
     b.as_ref().map(|b| sink.blob(b))
 }
@@ -215,7 +228,10 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
         resolution_dpi: d.resolution_dpi,
         mode: d.mode,
         depth: d.depth,
-        icc_profile: opt_blob(&d.icc_profile, sink),
+        icc_profile: None,
+        color_space: d.color_space.clone(),
+        source_space: d.source_space.clone(),
+        ocio_config: d.ocio_config.clone(),
         source_depth: d.source_depth,
         layers: d.layers.iter().map(|l| layer_m(l, sink)).collect(),
         channels: d.channels.iter().map(|c| channel_m(c, sink)).collect(),
@@ -224,6 +240,7 @@ pub(crate) fn doc_m(d: &Document, sink: &mut dyn Sink) -> DocM {
         metadata: MetadataM {
             xmp: d.metadata.xmp.clone(),
             exif: opt_blob(&d.metadata.exif, sink),
+            icc: opt_blob(&d.metadata.icc, sink),
             psd_resources: d.metadata.psd_resources.iter().map(|(id, n, b)| (*id, n.clone(), sink.blob(b))).collect(),
             psd_global_blocks: d.metadata.psd_global_blocks.iter().map(|(s, k, b)| (hex(s), hex(k), sink.blob(b))).collect(),
         },
@@ -498,7 +515,19 @@ impl Loader<'_> {
             channels.push(self.channel(c)?);
         }
         let quick_mask = m.quick_mask.as_ref().map(|c| self.channel(c)).transpose()?;
-        let mut md = Metadata { xmp: m.metadata.xmp.clone(), exif: self.opt_blob(&m.metadata.exif)?, psd_resources: Vec::new(), psd_global_blocks: Vec::new() };
+        let legacy_icc = if m.color_space.is_empty() { self.opt_blob(&m.icc_profile)? } else { None };
+        let mut md = Metadata {
+            xmp: m.metadata.xmp.clone(),
+            exif: self.opt_blob(&m.metadata.exif)?,
+            icc: self.opt_blob(&m.metadata.icc)?,
+            psd_resources: Vec::new(),
+            psd_global_blocks: Vec::new(),
+        };
+        // An old file's profile with no named space stays with the file's pixels: the engine
+        // converts them from it when the document is opened.
+        if md.icc.is_none() && !m.depth.is_float() && legacy_icc.is_some() && legacy_space(legacy_icc.as_deref(), m.depth).is_empty() {
+            md.icc = legacy_icc.clone();
+        }
         for (id, n, h) in &m.metadata.psd_resources {
             md.psd_resources.push((*id, n.clone(), self.fetch.blob(h)?));
         }
@@ -539,7 +568,9 @@ impl Loader<'_> {
             resolution_dpi: m.resolution_dpi,
             mode: m.mode,
             depth: m.depth,
-            icc_profile: self.opt_blob(&m.icc_profile)?,
+            color_space: if m.color_space.is_empty() { legacy_space(legacy_icc.as_deref(), m.depth) } else { m.color_space.clone() },
+            source_space: m.source_space.clone(),
+            ocio_config: m.ocio_config.clone(),
             source_depth: m.source_depth,
             layers,
             channels,
@@ -582,4 +613,23 @@ pub(crate) fn reserve_ids_through(max: u64) -> bool {
     }
     photocraft_doc::ensure_ids_above(max);
     true
+}
+
+#[cfg(test)]
+mod legacy_space_tests {
+    use super::legacy_space;
+    use photocraft_cms::Builtin;
+    use photocraft_color::SampleType;
+
+    #[test]
+    fn old_icc_blobs_map_to_names() {
+        let bytes = |b: Builtin| b.profile().to_bytes().to_vec();
+        assert_eq!(legacy_space(Some(&bytes(Builtin::LinearSrgb)), SampleType::F16), photocraft_color::space::LINEAR);
+        assert_eq!(legacy_space(Some(&bytes(Builtin::DisplayP3)), SampleType::U8), "sRGB Encoded P3-D65");
+        assert_eq!(legacy_space(Some(&bytes(Builtin::SGray)), SampleType::U16), photocraft_color::space::SRGB);
+        // No named equivalent: untagged (integer) or linear (float); garbage likewise.
+        assert_eq!(legacy_space(Some(&bytes(Builtin::CoatedCmyk)), SampleType::U8), "");
+        assert_eq!(legacy_space(Some(&vec![1, 2, 3]), SampleType::F32), photocraft_color::space::LINEAR);
+        assert_eq!(legacy_space(None, SampleType::U8), "");
+    }
 }

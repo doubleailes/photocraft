@@ -444,7 +444,7 @@ impl ColorState {
     /// profile).
     pub fn canvas_display_for(&self, doc: &Document, display: Option<u32>) -> Result<Arc<CanvasDisplay>> {
         let space = mode_space(doc.mode);
-        let doc_hash = doc.icc_profile.as_ref().and_then(|b| profile_from_bytes(b).ok()).filter(|p| p.color_space == space).map_or(0, |p| p.content_hash());
+        let doc_hash = crate::color_cmds::is_tagged(doc).then(|| crate::color_cmds::document_profile(doc)).filter(|p| p.color_space == space).map_or(0, |p| p.content_hash());
         let monitor = self.monitor_for(display);
         // A viewer that can't be built (a config that went away) leaves the ICC display on;
         // the viewer commands report why.

@@ -666,7 +666,7 @@ pub fn layer_document(doc: &Document, id: LayerId) -> Result<Document> {
     let fmt = doc.pixel_format();
     let mut out = Document::new(l.name.clone(), photocraft_doc::Size::new(b.width(), b.height()), doc.mode, doc.depth);
     out.resolution_dpi = doc.resolution_dpi;
-    out.icc_profile = doc.icc_profile.clone();
+    crate::color_cmds::copy_space(&mut out, doc);
     let mut surf = Surface::new(fmt);
     let rows: Vec<f32> = (b.y0..b.y1)
         .flat_map(|y| {

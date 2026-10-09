@@ -504,6 +504,7 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
     let multichannel = h.color_mode == PsdMode::Multichannel && h.depth != 1;
     let depth = if layered || multichannel { sample_for_depth(h.depth) } else { SampleType::U8 };
     let mut doc = Document::new("Untitled", Size::new(h.width, h.height), mode, depth);
+    let mut icc: Option<Vec<u8>> = None;
 
     // Resources.
     for r in &file.resources {
@@ -514,7 +515,7 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
                     doc.resolution_dpi = (ri.h_res() * f) as f32;
                 }
             }
-            ids::ICC_PROFILE => doc.icc_profile = Some(Arc::new(r.data.clone())),
+            ids::ICC_PROFILE => icc = Some(r.data.clone()),
             ids::XMP => doc.metadata.xmp = Some(String::from_utf8_lossy(&r.data).into_owned()),
             ids::EXIF => doc.metadata.exif = Some(Arc::new(r.data.clone())),
             1032 => parse_guides(&r.data, &mut doc),
@@ -562,12 +563,15 @@ pub fn psd_to_document_with(file: &PsdFile, ctl: &photocraft_raster::Interrupt) 
 
     // CMYK and Lab files convert to RGB as they are read; their profile describes the file's
     // model, not the document's.
-    let native = crate::native::Native::for_psd(h.color_mode, doc.icc_profile.as_deref().map(Vec::as_slice));
+    let native = crate::native::Native::for_psd(h.color_mode, icc.as_deref());
     if matches!(h.color_mode, PsdMode::Cmyk | PsdMode::Lab | PsdMode::Multichannel) {
-        doc.icc_profile = None;
+        // Converted to sRGB (or printed into it, multichannel) as they are read.
+        doc.color_space = photocraft_color::space::SRGB.to_string();
         if h.color_mode != PsdMode::Multichannel {
             warnings.push(format!("{:?} document converted to RGB (PhotoCraft documents are RGB or grayscale)", h.color_mode));
         }
+    } else {
+        crate::spaces::tag_from_icc(&mut doc, icc.as_deref(), &mut warnings);
     }
     let fmt = doc.pixel_format();
     let cc = native.as_ref().map_or(fmt.mode.color_channels(), crate::native::Native::channels);

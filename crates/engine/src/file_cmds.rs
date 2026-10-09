@@ -778,7 +778,7 @@ fn load_files_into_stack(s: &mut Session, p: &Value) -> Result<Value> {
     let h = docs.iter().map(|(_, d)| d.size.height).max().unwrap_or(1);
     let mut stack = Document::new(stem(&paths[0]), photocraft_doc::Size::new(w, h), first.mode, first.depth);
     stack.resolution_dpi = first.resolution_dpi;
-    stack.icc_profile = first.icc_profile.clone();
+    crate::color_cmds::copy_space(&mut stack, first);
     stack.source_depth = first.source_depth;
     let fmt = stack.pixel_format();
     // First file at the bottom, like Photoshop's script.

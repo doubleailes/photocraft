@@ -22,10 +22,11 @@ pub fn import_flat(name: &str, bytes: &[u8]) -> Result<ImportResult, IoError> {
     let img = codecs::decode(bytes)?;
     let mut r = image_to_document(name, &img)?;
     // OpenEXR and Radiance HDR hold linear, scene-referred values (Rec. 709 primaries unless
-    // stated otherwise): tag them linear sRGB so they display and convert correctly.
+    // stated otherwise): tag them linear so they display and convert correctly.
     let d = &mut r.document;
-    if d.icc_profile.is_none() && d.mode == ColorMode::Rgb && matches!(codecs::detect(bytes), Some(Format::OpenExr | Format::Hdr)) {
-        d.icc_profile = Some(photocraft_cms::Builtin::LinearSrgb.profile().to_bytes());
+    if d.color_space.is_empty() && d.mode == ColorMode::Rgb && matches!(codecs::detect(bytes), Some(Format::OpenExr | Format::Hdr)) {
+        d.color_space = photocraft_color::space::LINEAR.to_string();
+        d.source_space = photocraft_color::space::LINEAR.to_string();
     }
     Ok(r)
 }
@@ -57,7 +58,8 @@ pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult,
     let mut warnings: Vec<String> = img.warnings.iter().map(ToString::to_string).collect();
     // CMYK files (JPEG, TIFF) convert to sRGB through their profile: documents are RGB or gray.
     let converted;
-    let img = if img.layout().is_cmyk() {
+    let converted_from_cmyk = img.layout().is_cmyk();
+    let img = if converted_from_cmyk {
         converted = cmyk_image_to_srgb(img)?;
         warnings.push("CMYK image converted to RGB (PhotoCraft documents are RGB or grayscale)".to_string());
         &converted
@@ -98,7 +100,12 @@ pub(crate) fn image_to_document(name: &str, img: &Image) -> Result<ImportResult,
         bg.locks.position = true;
     }
     doc.layers.push(bg);
-    doc.icc_profile = img.icc.clone().map(Arc::new);
+    if converted_from_cmyk {
+        // Converted to sRGB above: the file's CMYK profile no longer describes the pixels.
+        doc.color_space = photocraft_color::space::SRGB.to_string();
+    } else {
+        crate::spaces::tag_from_icc(&mut doc, img.icc.as_deref(), &mut warnings);
+    }
     doc.metadata.exif = img.meta.exif.clone().map(Arc::new);
     doc.metadata.xmp = img.meta.xmp.clone();
     if let Some((x, _)) = img.meta.dpi {
@@ -156,7 +163,7 @@ pub fn document_to_image(doc: &Document, warnings: &mut Vec<String>) -> Result<I
     let fmt = doc.pixel_format();
     let n = (w as usize) * (h as usize);
     let native = single_layer(doc);
-    let icc = doc.icc_profile.as_ref().map(|i| i.to_vec());
+    let icc = crate::spaces::embedded_icc(doc);
     let img = if let Some(s) = native {
         // Native path: keep model and depth. The surface's encoded samples are the codec's raw
         // native-endian samples, copied a band of rows at a time (alpha dropped when opaque).

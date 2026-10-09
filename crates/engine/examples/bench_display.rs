@@ -51,7 +51,9 @@ fn main() {
         ("linear sRGB (EXR)", Some(Builtin::LinearSrgb), SampleType::F32),
     ] {
         let mut d = Document::with_background("b", Size::new(w, h), ColorMode::Rgb, depth, Color::rgb(0.7, 0.4, 0.2));
-        d.icc_profile = profile.map(|b| b.profile().to_bytes());
+        if let Some(b) = profile {
+            photocraft_engine::color_cmds::tag_with_profile(&mut d, b.profile());
+        }
         let s = Session::new();
         let mut buf = None;
         let composite = time(reps, || buf = Some(photocraft_compose::flatten(&d)));

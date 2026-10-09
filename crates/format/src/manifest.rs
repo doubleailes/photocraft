@@ -41,7 +41,17 @@ pub struct DocM {
     pub resolution_dpi: f32,
     pub mode: ColorMode,
     pub depth: SampleType,
+    /// Files written before phase 3 of the OCIO migration: the document's ICC profile. Read
+    /// only, mapped to `color_space` on load (`photocraft_color::space`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub icc_profile: Option<Hash>,
+    /// `Document::color_space` (empty in older files: see `icc_profile`).
+    #[serde(default)]
+    pub color_space: String,
+    #[serde(default)]
+    pub source_space: String,
+    #[serde(default)]
+    pub ocio_config: String,
     /// Integer depth of the file the pixels came from (linear documents save back to it).
     #[serde(default)]
     pub source_depth: Option<SampleType>,
@@ -336,6 +346,9 @@ fn default_channel_opacity() -> f32 {
 pub struct MetadataM {
     pub xmp: Option<String>,
     pub exif: Option<Hash>,
+    /// `Metadata::icc`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub icc: Option<Hash>,
     /// (id, name, blob)
     pub psd_resources: Vec<(u16, String, Hash)>,
     /// (signature hex, key hex, blob)

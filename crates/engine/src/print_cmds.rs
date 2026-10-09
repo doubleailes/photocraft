@@ -212,7 +212,7 @@ fn print_image(doc: &Document, p: &Value, cmd: &str) -> Result<(PrintImage, Valu
     // 8-bit print data holds encoded values: a linear document prints as untagged sRGB / sGray.
     if let Some(default) = photocraft_cms::builtin::default_for(crate::color_cmds::mode_space(doc.mode)).filter(|_| crate::linear_doc::is_linear(&doc)) {
         crate::linear_doc::to_encoded(&mut doc, default)?;
-        doc.icc_profile = None;
+        crate::color_cmds::untag(&mut doc);
     }
     let gray = doc.mode == ColorMode::Grayscale;
     let cc = if gray { 1 } else { 3 };
@@ -246,7 +246,7 @@ fn print_image(doc: &Document, p: &Value, cmd: &str) -> Result<(PrintImage, Valu
             Ok((PrintImage { width, height, channels: k, data, icc: Some(dst.to_bytes().to_vec()) }, info))
         }
         "printerManages" | "noColorManagement" => {
-            let icc = if handling == "noColorManagement" { None } else { doc.icc_profile.as_ref().map(|v| v.to_vec()) };
+            let icc = if handling == "noColorManagement" { None } else { crate::color_cmds::embedded_icc(&doc).map(|v| v.to_vec()) };
             Ok((PrintImage { width, height, channels: cc, data: vals.iter().map(to8).collect(), icc }, info))
         }
         "separations" => Err(bad(cmd, "Separations printing is not supported; use photocraftManages with a CMYK printer profile")),

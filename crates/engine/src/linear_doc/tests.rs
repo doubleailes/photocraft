@@ -57,7 +57,7 @@ fn opening_an_8_bit_file_gives_linear_half_float_and_records_the_source_depth() 
 fn a_linearised_file_with_another_profile_does_not_ask_what_to_do() {
     let mut s = Session::new();
     let mut d = ramp_doc(SampleType::U8, 16);
-    d.icc_profile = Some(Builtin::AdobeRgbCompat.profile().to_bytes());
+    crate::color_cmds::tag_with_profile(&mut d, Builtin::AdobeRgbCompat.profile());
     let (_, r) = s.open_document(d, None);
     assert_eq!((r["mismatch"].as_bool(), r["ask"].as_bool(), r["linearized"].as_bool()), (Some(true), Some(false), Some(true)));
     assert!(is_linear(&s.active().unwrap().doc));
@@ -114,7 +114,7 @@ fn exr_export_stays_linear_float_and_jpeg_is_encoded() {
 #[test]
 fn float_files_are_left_alone() {
     let mut f32doc = ramp_doc(SampleType::F32, 8);
-    f32doc.icc_profile = Some(Builtin::Srgb.profile().to_bytes());
+    crate::color_cmds::tag_with_profile(&mut f32doc, Builtin::Srgb.profile());
     assert!(!linearize(&mut f32doc).unwrap(), "32-bit files are linear whatever their tag");
 }
 
@@ -248,7 +248,7 @@ fn an_image_from_another_app_opens_linear_with_new_from_clipboard() {
 #[test]
 fn a_wide_gamut_file_keeps_its_colours() {
     let mut d = Document::with_background("p3", Size::new(2, 2), ColorMode::Rgb, SampleType::U8, Color::rgb(1.0, 0.0, 0.0));
-    d.icc_profile = Some(Builtin::DisplayP3.profile().to_bytes());
+    crate::color_cmds::tag_with_profile(&mut d, Builtin::DisplayP3.profile());
     linearize(&mut d).unwrap();
     let p = d.layers[0].surface().unwrap().pixel(0, 0).to_vec();
     // P3 red is outside sRGB: linear sRGB holds it with a red above 1 or negative green/blue.

@@ -55,11 +55,11 @@ codec_rt!(tiff_gray8, "tiff", ColorMode::Grayscale, SampleType::U8, false, 0.0);
 #[test]
 fn exr_rgba32() {
     let mut d = single(ColorMode::Rgb, SampleType::F32, true);
-    d.icc_profile = Some(photocraft_cms::Builtin::LinearSrgb.profile().to_bytes());
+    d.color_space = photocraft_color::space::LINEAR.into();
     let r = export(&d, "exr", &ExportOptions::default()).expect("export");
     let back = import("x.exr", &r.bytes).expect("import").document;
     assert_eq!((back.size, back.mode, back.depth), (d.size, d.mode, d.depth));
-    assert_eq!(back.icc_profile.as_deref(), d.icc_profile.as_deref(), "tagged linear sRGB");
+    assert_eq!(back.color_space, d.color_space, "tagged linear");
     pixels_eq(&d, &back, 0.0);
     // Untagged (sRGB) → linearised.
     let srgb = single(ColorMode::Rgb, SampleType::F32, true);
@@ -116,25 +116,18 @@ fn jpeg_gray8() {
 fn metadata_roundtrip_png() {
     let mut d = single(ColorMode::Rgb, SampleType::U8, false);
     d.resolution_dpi = 300.0;
-    d.icc_profile = Some(std::sync::Arc::new(sample_icc()));
+    d.color_space = "sRGB Encoded P3-D65".into();
     d.metadata.xmp = Some("<x:xmpmeta xmlns:x='adobe:ns:meta/'/>".into());
     // DPI and ICC always travel with the file; XMP unless Export As asks for none (#647).
     let none = ExportOptions { xmp: photocraft_io::XmpEmbed::None, ..ExportOptions::default() };
     let r = export(&d, "png", &none).unwrap();
     let back = import("x.png", &r.bytes).unwrap().document;
     assert!((back.resolution_dpi - 300.0).abs() < 1.0);
-    assert_eq!(back.icc_profile, d.icc_profile);
+    assert_eq!(back.color_space, d.color_space);
     assert_eq!(back.metadata.xmp, None);
     let r = export(&d, "png", &ExportOptions::default()).unwrap();
     let back = import("x.png", &r.bytes).unwrap().document;
     assert_eq!(back.metadata.xmp, d.metadata.xmp);
-}
-
-fn sample_icc() -> Vec<u8> {
-    // Arbitrary bytes are fine for PNG iCCP (the codec does not validate).
-    let mut v = vec![0u8; 128];
-    v[36..40].copy_from_slice(b"acsp");
-    v
 }
 
 #[test]
@@ -289,7 +282,7 @@ fn non_srgb_rgb_is_converted_to_srgb_for_formats_without_a_profile() {
     let cols: [&[f32]; 3] = [&[0.0, 0.05, 0.0, 1.0], &[0.2, 0.5, 0.8, 1.0], &[1.0, 0.25, 0.0, 1.0]];
     for (profile, depth) in [(Builtin::LinearSrgb, SampleType::F32), (Builtin::LinearSrgb, SampleType::U16), (Builtin::DisplayP3, SampleType::U8)] {
         let mut d = columns(ColorMode::Rgb, depth, &cols);
-        d.icc_profile = Some(profile.profile().to_bytes());
+        d.color_space = photocraft_color::space::name_for_profile(profile.profile()).unwrap().into();
         let stored = column_pixels(&d, cols.len());
         let t = Transform::new(profile.profile(), Builtin::Srgb.profile(), Intent::Perceptual, true).unwrap();
         let want: Vec<Vec<f32>> = stored
@@ -307,7 +300,7 @@ fn non_srgb_rgb_is_converted_to_srgb_for_formats_without_a_profile() {
             assert!(r.warnings.iter().any(|w| w.contains("converted to sRGB")), "{what}: {:?}", r.warnings);
             assert!(!r.warnings.iter().any(|w| w.contains("ICC profile")), "{what}: {:?}", r.warnings);
             let back = import(&format!("a.{ext}"), &r.bytes).unwrap().document;
-            assert_eq!(back.icc_profile, None, "{what}");
+            assert!(back.color_space.is_empty(), "{what}");
             assert_colors(&column_pixels(&back, cols.len()), &want, 1.5 / 255.0, &what);
         }
         // Formats that embed the profile keep it and the values; a linear float document
@@ -315,7 +308,7 @@ fn non_srgb_rgb_is_converted_to_srgb_for_formats_without_a_profile() {
         let r = export(&d, "a.png", &ExportOptions::default()).unwrap();
         let back = import("a.png", &r.bytes).unwrap().document;
         if depth.is_float() && profile == Builtin::LinearSrgb {
-            assert_eq!(back.icc_profile.as_deref(), Some(&*Builtin::Srgb.profile().to_bytes()), "{profile:?} {depth:?}");
+            assert_eq!(back.color_space, photocraft_color::space::SRGB, "{profile:?} {depth:?}");
             let srgb = Transform::new(profile.profile(), Builtin::Srgb.profile(), Intent::RelativeColorimetric, false).unwrap();
             let encoded: Vec<Vec<f32>> = stored
                 .iter()
@@ -328,13 +321,13 @@ fn non_srgb_rgb_is_converted_to_srgb_for_formats_without_a_profile() {
             assert_colors(&column_pixels(&back, cols.len()), &encoded, 0.6 / 255.0, &format!("{profile:?} {depth:?} png"));
             continue;
         }
-        assert_eq!(back.icc_profile, d.icc_profile, "{profile:?} {depth:?}");
+        assert_eq!(back.color_space, d.color_space, "{profile:?} {depth:?}");
         assert_colors(&column_pixels(&back, cols.len()), &stored, 1e-4, &format!("{profile:?} {depth:?} png"));
     }
     // sRGB (tagged or not) is written unchanged.
-    for icc in [None, Some(Builtin::Srgb.profile().to_bytes())] {
+    for space in ["", photocraft_color::space::SRGB] {
         let mut d = columns(ColorMode::Rgb, SampleType::U8, &cols);
-        d.icc_profile = icc;
+        d.color_space = space.into();
         let r = export(&d, "a.bmp", &ExportOptions::default()).unwrap();
         assert!(!r.warnings.iter().any(|w| w.contains("converted to sRGB")), "{:?}", r.warnings);
         let back = import("a.bmp", &r.bytes).unwrap().document;

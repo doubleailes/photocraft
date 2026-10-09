@@ -62,7 +62,7 @@ pub(crate) struct Source {
 }
 
 /// Loaded sources, the common pixel format and the first source's ICC profile.
-type Loaded = (Vec<Source>, PixelFormat, Option<std::sync::Arc<Vec<u8>>>);
+type Loaded = (Vec<Source>, PixelFormat, crate::color_cmds::SpaceTag);
 
 fn load_sources(s: &Session, p: &Value, cmd: &str) -> Result<Loaded> {
     let mut docs: Vec<(String, Document)> = Vec::new();
@@ -89,7 +89,7 @@ fn load_sources(s: &Session, p: &Value, cmd: &str) -> Result<Loaded> {
     }
     let first = &docs[0].1;
     let fmt = first.pixel_format();
-    let icc = first.icc_profile.clone();
+    let icc = crate::color_cmds::SpaceTag::of(first);
     let out = docs
         .into_iter()
         .map(|(name, d)| {
@@ -455,7 +455,7 @@ fn photomerge(s: &mut Session, p: &Value) -> Result<Value> {
             ctx.check()?;
             ctx.progress(0.6, "Photomerge: blending images");
             let mut doc = Document::new(doc_name, Size::new(cw as u32, ch as u32), fmt.mode, fmt.sample);
-            doc.icc_profile = icc;
+            icc.apply(&mut doc);
             let mut info = json!({});
             let ref_pos = placed.iter().position(|&i| i == al.reference).unwrap_or(0);
             if blend {
@@ -704,7 +704,11 @@ fn merge_to_hdr(s: &mut Session, p: &Value) -> Result<Value> {
         q[3] = 1.0;
     }
     let mut doc = Document::new(format!("Untitled_HDR{}", s.documents().len() + 1), Size::new(w as u32, h as u32), ColorMode::Rgb, depth);
-    doc.icc_profile = if depth.is_float() { Some(photocraft_cms::builtin::Builtin::LinearSrgb.profile().to_bytes()) } else { icc };
+    if depth.is_float() {
+        crate::color_cmds::tag_with_profile(&mut doc, photocraft_cms::builtin::Builtin::LinearSrgb.profile());
+    } else {
+        icc.apply(&mut doc);
+    }
     let fmt = doc.pixel_format();
     let n = fmt.channels();
     let mut data = vec![0.0f32; w * h * n];
@@ -773,7 +777,7 @@ fn crop_and_straighten(s: &mut Session, _p: &Value) -> Result<Value> {
         }
         px.write_region(keep, &data);
         let mut nd = Document::new(format!("{} copy {}", doc.name, k + 1), Size::new(pw, ph), doc.mode, doc.depth);
-        nd.icc_profile = doc.icc_profile.clone();
+        crate::color_cmds::copy_space(&mut nd, &doc);
         nd.source_depth = doc.source_depth;
         nd.resolution_dpi = doc.resolution_dpi;
         let mut bg = Layer::new("Background", LayerContent::Raster(px));

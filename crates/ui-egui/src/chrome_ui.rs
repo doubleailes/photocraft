@@ -102,7 +102,12 @@ pub fn status_info_text(doc: &Document, key: &str, tool: &str, profile: &str) ->
 
 fn profile_name(doc: &Document) -> String {
     let mode = crate::canvas::mode_label(doc);
-    let Some(bytes) = doc.icc_profile.as_ref() else {
+    // The named colour space (an OCIO name), else a file's unnamed embedded profile.
+    let space: String = doc.color_space.chars().filter(|c| !c.is_control()).take(128).collect();
+    if !space.trim().is_empty() {
+        return space.trim().to_owned();
+    }
+    let Some(bytes) = doc.metadata.icc.as_ref() else {
         return crate::i18n::fmt(tl!("Untagged {mode}"), &[("mode", tl!(mode))]);
     };
     let Ok(profile) = photocraft_engine::color_cmds::profile_from_bytes(bytes) else {
@@ -236,39 +241,44 @@ mod tests {
     #[test]
     fn status_profile_describes_rgb_gray_and_custom_profiles_without_mutating_the_document() {
         let mut rgb = doc();
-        rgb.icc_profile = Some(photocraft_engine::color_cmds::working_profile(rgb.mode).to_bytes());
-        let before = rgb.icc_profile.clone();
-        assert_eq!(profile_name(&rgb), "sRGB IEC61966-2.1");
-        assert_eq!(status_info_text(&rgb, "profile", "", &profile_name(&rgb)), "sRGB IEC61966-2.1 (16bpc)");
-        assert_eq!(rgb.icc_profile, before);
+        rgb.color_space = photocraft_color::space::SRGB.into();
+        let before = rgb.clone();
+        assert_eq!(profile_name(&rgb), "sRGB Encoded Rec.709 (sRGB)");
+        assert_eq!(status_info_text(&rgb, "profile", "", &profile_name(&rgb)), "sRGB Encoded Rec.709 (sRGB) (16bpc)");
+        assert_eq!(rgb, before);
 
         let mut gray = doc();
         gray.mode = photocraft_doc::ColorMode::Grayscale;
-        gray.icc_profile = Some(photocraft_engine::color_cmds::working_profile(gray.mode).to_bytes());
-        assert_eq!(profile_name(&gray), "sGray (sRGB tone curve, Photocraft)");
+        gray.color_space = photocraft_color::space::LINEAR.into();
+        assert_eq!(profile_name(&gray), "Linear Rec.709 (sRGB)");
 
+        // A file's embedded profile with no named space shows its description.
         let mut custom = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb)).clone();
         custom.description = "PhotoCraft Studio RGB".into();
         let mut custom_doc = doc();
-        custom_doc.icc_profile = Some(custom.with_encoded_bytes().to_bytes());
+        custom_doc.color_space.clear();
+        custom_doc.metadata.icc = Some(custom.with_encoded_bytes().to_bytes());
         assert_eq!(profile_name(&custom_doc), "PhotoCraft Studio RGB");
     }
 
     #[test]
     fn status_profile_falls_back_for_malformed_unnamed_and_mismatched_profiles() {
         let mut malformed = doc();
-        malformed.icc_profile = Some(std::sync::Arc::new(vec![1, 2, 3]));
+        malformed.color_space.clear();
+        malformed.metadata.icc = Some(std::sync::Arc::new(vec![1, 2, 3]));
         assert_eq!(profile_name(&malformed), "Invalid RGB profile");
 
         let mut unnamed_profile = (*photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb)).clone();
         unnamed_profile.description.clear();
         let mut unnamed = doc();
-        unnamed.icc_profile = Some(unnamed_profile.with_encoded_bytes().to_bytes());
+        unnamed.color_space.clear();
+        unnamed.metadata.icc = Some(unnamed_profile.with_encoded_bytes().to_bytes());
         assert_eq!(profile_name(&unnamed), "Unnamed RGB profile");
 
         let mut mismatched = doc();
+        mismatched.color_space.clear();
         mismatched.mode = photocraft_doc::ColorMode::Grayscale;
-        mismatched.icc_profile = Some(photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb).to_bytes());
+        mismatched.metadata.icc = Some(photocraft_engine::color_cmds::working_profile(photocraft_doc::ColorMode::Rgb).to_bytes());
         assert_eq!(profile_name(&mismatched), "Invalid Gray profile");
     }
 

@@ -634,6 +634,10 @@ pub type PsdGlobalBlock = ([u8; 4], [u8; 4], Arc<Vec<u8>>);
 pub struct Metadata {
     pub xmp: Option<String>,
     pub exif: Option<Arc<Vec<u8>>>,
+    /// A file's embedded ICC profile when it matches none of the named spaces
+    /// (`photocraft_color::space`): the pixels are in it until the engine converts them when the
+    /// document is opened, which clears it. Never set on a document in a session.
+    pub icc: Option<Arc<Vec<u8>>>,
     /// Raw PSD image resources we don't model yet: (id, name, data), for lossless round-trip.
     pub psd_resources: Vec<(u16, String, Arc<Vec<u8>>)>,
     /// Raw PSD global additional-layer-info blocks: (signature, key, data),
@@ -649,7 +653,15 @@ pub struct Document {
     pub resolution_dpi: f32,
     pub mode: ColorMode,
     pub depth: SampleType,
-    pub icc_profile: Option<Arc<Vec<u8>>>,
+    /// The colour space the pixel values are in, by name (`photocraft_color::space`; an OCIO
+    /// colour space name). Every document in a session is in `space::LINEAR`; a file as read is
+    /// in its own encoding. Empty: untagged, the working space of the mode.
+    pub color_space: String,
+    /// The space the document came from and is meant for (the file's space): saving to an
+    /// integer format encodes into it. Empty: unknown (sRGB).
+    pub source_space: String,
+    /// The OCIO config the document was made with, a path or `ocio://` URI (informational).
+    pub ocio_config: String,
     /// Integer bit depth of the file the pixels came from (`None`: created here, or a float
     /// file). A linear document saved to an integer format is encoded back to this depth.
     pub source_depth: Option<SampleType>,
@@ -707,7 +719,9 @@ impl Document {
             resolution_dpi: 72.0,
             mode,
             depth,
-            icc_profile: None,
+            color_space: String::new(),
+            source_space: String::new(),
+            ocio_config: String::new(),
             source_depth: None,
             layers: Vec::new(),
             channels: Vec::new(),

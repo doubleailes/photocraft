@@ -171,6 +171,33 @@ Where this leaves step 4:
   before, a brush dab in the tens of ms at 36 MP. Filters are the slowest hit (+60% at both
   sizes), since they now work on 2× the bytes.
 
+### Phase 3: the document model (2026-10-09)
+
+`Document.icc_profile` is gone. Pixels stay linear Rec.709 for now (moving them to the config's
+`scene_linear`, ACEScg, belongs with phase 4's picker and blending work).
+
+* **Fields.** `color_space` names the space the pixel values are in: `Linear Rec.709 (sRGB)` for
+  every document in a session, the file's encoding for a file as read, empty for untagged (the
+  working space). It replaces what `icc_profile` described, so it is the pixel space rather than
+  only the intent: files as read and the scratch documents some commands re-encode
+  (Photomerge, Merge to HDR Pro, Print) are not linear. `source_space` records the file's own
+  space (set on import and kept by the linear door) for phase 6's exports; exports still encode
+  to sRGB as before. `ocio_config` is informational.
+* **Named spaces** (`photocraft_color::space`): sRGB, linear Rec.709, Gamma 2.2 Rec.709 (gray),
+  Display P3, Adobe RGB, ProPhoto and Rec.709-encoded Rec.2020, each backed by a built-in ICC
+  profile for the conversions until phase 8. The names are the CG config's where it has the
+  space (ProPhoto and Rec.709-encoded Rec.2020 keep descriptive names). Embedded profiles map by
+  colour, so Photoshop's sRGB and linear sRGB bytes are the named spaces.
+* **Unnamed profiles.** An integer file whose embedded profile matches no named space keeps the
+  bytes in `Document::metadata.icc` (with an import warning), and the linear door converts from
+  them and clears them, so no document in a session carries ICC. Old `.pcraft` files map their
+  `icc_profile` blob the same way. PSD/TIFF/PNG/JPEG exports embed the named space's built-in
+  profile.
+* **ICC files are not document spaces** until ocio-rs #8: Assign/Convert to Profile and the
+  working RGB/gray spaces in Color Settings take named spaces only (proof and monitor profiles,
+  and the working CMYK used for proofing, stay ICC). Placeholder or unreadable embedded profiles
+  are ignored with a warning instead of being carried as bytes.
+
 ### Phase 5, first slice: the OCIO viewer (2026-10-08)
 
 Started before phases 2–4, so it carries the part of phase 2 it needs.
@@ -228,7 +255,7 @@ Started before phases 2–4, so it carries the part of phase 2 it needs.
    * Role helpers (`scene_linear`, `color_picking`, `texture_paint`, `data`).
    * A panic guard, and a `bake_display_lut(display, view, look, size)` with a shaper.
    * Register it in `xtask/src/layers.rs`.
-3. **Document model.**
+3. **Document model.** (Done, see "Phase 3" below.)
    * `Document.icc_profile` becomes `color_space: String`. Pixels are always `scene_linear`, so this records the *source/intent* space for round-trip export. Add `ocio_config: String` (URI or path, informational).
    * `.pcraft`: new fields get `#[serde(default)]`; old files with ICC bytes are linearised on load.
 4. **Linear compositor.**

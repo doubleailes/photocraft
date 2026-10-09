@@ -266,7 +266,11 @@ pub fn import_flat(name: &str, bytes: &[u8]) -> Result<Document, String> {
     let stem = std::path::Path::new(name).file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or(name.to_string());
     let mut doc = Document::new(stem, Size::new(w, h), mode, depth);
     // A CMYK profile no longer describes the converted pixels.
-    doc.icc_profile = img.icc.clone().filter(|_| !cmyk).map(std::sync::Arc::new);
+    if let Some(b) = img.icc.as_deref().filter(|_| !cmyk) {
+        photocraft_engine::color_cmds::tag_from_icc(&mut doc, b);
+    } else if cmyk {
+        doc.color_space = photocraft_color::space::SRGB.to_string();
+    }
     if let Some((x, _)) = img.meta.dpi {
         doc.resolution_dpi = x;
     }
@@ -289,8 +293,8 @@ pub fn export_flat(doc: &Document, path: &str) -> Result<Vec<u8>, String> {
         SampleType::F16 | SampleType::F32 => Image::from_f32(w, h, ChannelLayout::Rgba, &data),
     }
     .map_err(|e| e.to_string())?;
-    let img = match &doc.icc_profile {
-        Some(icc) if doc.mode == ColorMode::Rgb => img.with_icc(Some((**icc).clone())),
+    let img = match photocraft_engine::color_cmds::embedded_icc(doc) {
+        Some(icc) if doc.mode == ColorMode::Rgb => img.with_icc(Some((*icc).clone())),
         _ => img,
     };
     photocraft_codecs::encode(&img, format, &EncodeOptions::default()).map_err(|e| e.to_string())

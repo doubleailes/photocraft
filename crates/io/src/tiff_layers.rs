@@ -8,7 +8,6 @@
 //! tags, in the byte order the TIFF encoder writes, next to the flattened composite the TIFF
 //! itself carries.
 
-use std::sync::Arc;
 
 use photocraft_codecs::{self as codecs, ChannelLayout, Format, Image, SampleType as CSample};
 use photocraft_doc::Document;
@@ -102,8 +101,9 @@ pub(crate) fn import_layered(name: &str, img: &Image, layers: &[u8]) -> Result<I
     let (mut doc, w) = psd_to_document(&file);
     warnings.extend(w);
     doc.name = name.to_string();
-    if doc.icc_profile.is_none() {
-        doc.icc_profile = img.icc.clone().map(Arc::new);
+    // The layered data's own profile (resource 1039) wins; else the TIFF's.
+    if doc.color_space.is_empty() && doc.metadata.icc.is_none() && doc.source_space.is_empty() {
+        crate::spaces::tag_from_icc(&mut doc, img.icc.as_deref(), &mut warnings);
     }
     if !img.meta.text.is_empty() {
         warnings.push(format!("{} text metadata entries are not kept in the document", img.meta.text.len()));
@@ -203,7 +203,7 @@ pub(crate) fn export_layered(doc: &Document, opts: &ExportOptions) -> Result<Exp
     let data = interleave(&file.image_data.data, w, h, channels, sample)?;
     let layout = layout_for(fmt.mode, has_alpha);
     let mut img = Image::from_raw(w, h, layout, sample, data)?;
-    img.icc = doc.icc_profile.as_ref().map(|i| i.to_vec());
+    img.icc = crate::spaces::embedded_icc(doc);
     img.meta = codecs::Metadata {
         exif: doc.metadata.exif.as_ref().map(|e| e.to_vec()),
         xmp: doc.metadata.xmp.clone().filter(|_| opts.xmp == crate::XmpEmbed::All),

@@ -187,12 +187,12 @@ impl SmartOut {
 /// profile) into a float host's linear values, as the engine renders it (`linear_doc`); `None`
 /// when no conversion applies (an integer host, a float source).
 fn linear_source_transform(src: &Document, host: PixelFormat) -> Option<photocraft_cms::Transform> {
-    use photocraft_cms::{Builtin, ColorSpace, Intent, Profile};
+    use photocraft_cms::{Builtin, ColorSpace, Intent};
     if !host.sample.is_float() || src.depth.is_float() {
         return None;
     }
     // Gray composites come out as equal RGB channels; sGray has the sRGB curve.
-    let embedded = src.icc_profile.as_ref().and_then(|b| Profile::parse(b).ok()).filter(|p| p.color_space == ColorSpace::Rgb && src.mode == ColorMode::Rgb);
+    let embedded = crate::spaces::pixel_profile(src).filter(|p| p.color_space == ColorSpace::Rgb && src.mode == ColorMode::Rgb);
     let from = embedded.as_ref().unwrap_or_else(|| Builtin::Srgb.profile());
     photocraft_cms::Transform::new(from, Builtin::LinearSrgb.profile(), Intent::RelativeColorimetric, false).ok()
 }
@@ -1059,7 +1059,7 @@ pub(crate) fn estimate_psd_size(doc: &Document) -> Option<u64> {
         structural_bytes = structural_bytes.checked_add(u64::try_from(channel.name.len()).ok()?)?;
     }
     structural_bytes = structural_bytes
-        .checked_add(u64::try_from(doc.icc_profile.as_ref().map_or(0, |profile| profile.len())).ok()?)?
+        .checked_add(u64::try_from(crate::spaces::embedded_icc(doc).map_or(0, |profile| profile.len())).ok()?)?
         .checked_add(u64::try_from(doc.metadata.xmp.as_ref().map_or(0, String::len)).ok()?)?
         .checked_add(u64::try_from(doc.metadata.exif.as_ref().map_or(0, |data| data.len())).ok()?)?;
     for (_, name, data) in &doc.metadata.psd_resources {
@@ -1189,8 +1189,8 @@ fn document_to_psd_nested(doc: &Document, opts: &PsdExportOptions, depth: u32) -
         ImageResource::new(ids::GLOBAL_ANGLE, (doc.global_light.angle.round() as i32).to_be_bytes().to_vec()),
         ImageResource::new(ids::GLOBAL_ALTITUDE, (doc.global_light.altitude.round() as i32).to_be_bytes().to_vec()),
     ];
-    if let Some(icc) = &doc.icc_profile {
-        resources.push(ImageResource::new(ids::ICC_PROFILE, icc.to_vec()));
+    if let Some(icc) = crate::spaces::embedded_icc(doc) {
+        resources.push(ImageResource::new(ids::ICC_PROFILE, icc));
     }
     if !doc.guides.horizontal.is_empty() || !doc.guides.vertical.is_empty() {
         resources.push(ImageResource::new(1032, guides_resource(doc)));

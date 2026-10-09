@@ -136,7 +136,8 @@ fn testgen_cmyk_and_lab_open_as_rgb() {
         let what = format!("{mode:?} {depth}");
         assert_eq!(d.mode, Mode::Rgb, "{what}");
         assert_eq!(d.depth.bits(), u32::from(depth), "{what}");
-        assert_eq!(d.icc_profile, None, "{what}: the file's profile describes its own model");
+        assert_eq!(d.color_space, photocraft_color::space::SRGB, "{what}: converted to sRGB; the file's profile describes its own model");
+        assert!(d.metadata.icc.is_none(), "{what}");
         assert!(imp.warnings.iter().any(|w| w.contains("converted to RGB")), "{what}: {:?}", imp.warnings);
         let records = f.layers().iter().filter(|l| l.section_type() != SectionType::BoundingDivider).count();
         assert_eq!(d.walk().len(), records, "{what}: layer for layer");
@@ -195,7 +196,9 @@ fn testgen_import_details() {
     let b = neg.surface().unwrap().content_bounds();
     assert!(b.x0 < 0 && b.y0 < 0);
     assert!(neg.mask.is_some());
-    assert!(d.icc_profile.is_some());
+    // The generator's ICC resource is placeholder bytes: not a profile, so ignored and said so.
+    assert!(d.color_space.is_empty() && d.metadata.icc.is_none());
+    assert!(warnings.iter().any(|w| w.contains("ICC profile can't be read")), "{warnings:?}");
     assert!((d.resolution_dpi - 72.0).abs() < 1e-3);
     assert!(d.metadata.xmp.is_some());
     // Named saved-path resource (2000) becomes a document path, raw bytes kept for export.
