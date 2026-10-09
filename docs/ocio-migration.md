@@ -181,7 +181,12 @@ Started before phases 2–4, so it carries the part of phase 2 it needs.
   (ocio-rs #7), and `bake_viewer(src, display, view, look, size)`: a log2 shaper
   (2^-12…2^12, 0 → 0 exactly) and a `size`³ LUT, sampled trilinearly by the GPU and the CPU
   (`ViewerLut::apply`). 64³ bakes in about 140 ms (release); `Un-tone-mapped` stays within
-  2/255 of the exact sRGB curve. Builds for wasm. No processor cache or other roles yet (rest of phase 2).
+  2/255 of the exact sRGB curve, and the ACES 2.0 SDR view within 0.2/255 on neutrals and
+  3.5/255 on saturated colours of the exact processor (14 stops, measured 2026-10-09; 33³ is
+  1.0 and 7.1). Builds for wasm. Phase 2's rest landed too: `Role` (`scene_linear`,
+  `color_picking`, `texture_paint`, `data`; the viewer report lists them), and a per-config
+  processor cache with guarded conversions (`Ocio::processor`, `convert_rgba`), which phases 3,
+  4 and 6 will use in place of `photocraft_cms::transform::cached`.
 * **Viewer state** (`crates/engine/src/viewer.rs`). Session-wide `ColorState::viewer`:
   `ocio` (on/off), display, view, look, exposure, gamma. It lives in the engine, not
   `ui-egui/src/state.rs`, because the engine bakes the LUT and the CLI/MCP drive it the same way.
@@ -207,7 +212,11 @@ Started before phases 2–4, so it carries the part of phase 2 it needs.
 * **Verified on screen** (lavapipe): the GPU and CPU canvases show the same value (221 for white
   at +1.5 EV through the ACES SDR view), and `canvas_16f::ocio_viewer_on_screen` checks the GPU
   path against the sRGB curve.
-* **Still open:** a look picker in the viewer bar, the channel view and
+* **Tried and dropped:** baking the LUT from ACEScg through a Rec.709 → AP1 matrix, so colours
+  outside Rec.709 (negative there) would survive the shaper. The matrix's crosstalk
+  interpolates badly in the log lattice (saturated colours off by up to 0.15 through
+  Un-tone-mapped), far worse than the clamp it fixes. The bar also has a look picker now.
+* **Still open:** the channel view and
   Print through the viewer, a 65 536-entry table or analytic WGSL (ocio-rs #9) instead of the
   baked LUT, negative/out-of-gamut linear values (the shaper clamps them to 0), and per-document
   source spaces once phase 3 adds `Document.color_space`.

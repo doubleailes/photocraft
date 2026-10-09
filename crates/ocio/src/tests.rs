@@ -121,3 +121,68 @@ fn lut_bytes_and_degenerate_luts() {
     let short = ViewerLut { size: 4, shaper: Shaper::DEFAULT, data: vec![] };
     assert_eq!(short.apply([0.3; 3]), [0.3; 3]);
 }
+
+#[test]
+fn roles_and_conversions() {
+    let o = cg();
+    assert_eq!(o.role_space(Role::SceneLinear).as_deref(), Some("ACEScg"));
+    for r in Role::ALL {
+        assert!(o.role_space(r).is_some(), "{r:?}");
+    }
+    // Identity: same space, nothing to do.
+    let same = o.processor(LIN709, LIN709).unwrap();
+    assert!(same.is_identity());
+    // Linear Rec.709 → sRGB-encoded (color_picking): 0.18 → sRGB 0.4613.
+    let p = o.processor(LIN709, "color_picking").unwrap();
+    assert!(!p.is_identity());
+    let v = p.apply_rgb([0.18; 3]).unwrap();
+    assert!((v[0] - srgb_encode(0.18)).abs() < 1e-3, "{v:?}");
+    // Cached: the same processor comes back.
+    assert!(Arc::ptr_eq(&p, &o.processor(LIN709, "color_picking").unwrap()));
+    // Round trip through ACEScg, alpha kept, a trailing partial pixel left alone.
+    let mut px = vec![0.25, 0.5, 0.75, 0.3, 9.0];
+    o.convert_rgba(LIN709, "ACEScg", &mut px).unwrap();
+    assert_ne!(px[0], 0.25);
+    o.convert_rgba("ACEScg", LIN709, &mut px).unwrap();
+    for (a, b) in px.iter().zip([0.25, 0.5, 0.75, 0.3, 9.0]) {
+        assert!((a - b).abs() < 1e-4, "{px:?}");
+    }
+    assert!(o.processor("nope", LIN709).is_err());
+    assert!(o.convert_rgba(LIN709, "nope", &mut [0.0; 4]).is_err());
+}
+
+#[test]
+fn baked_aces_view_is_close_to_the_exact_processor() {
+    // Measured 2026-10-09 against the exact display/view processor over 14 stops: 64³ is
+    // within 0.2/255 on neutrals and 3.5/255 on saturated colours (33³: 1.0 and 7.1).
+    let o = cg();
+    let (d, v) = ("sRGB - Display", "ACES 2.0 - SDR 100 nits (Rec.709)");
+    let exact = o.config.get_display_view_processor(LIN709, d, v).unwrap().default_cpu_processor();
+    for (n, max_neutral, max_saturated) in [(33usize, 2.0, 10.0), (64, 1.0, 5.0)] {
+        let lut = o.bake_viewer(LIN709, d, v, "", n).unwrap();
+        let (mut worst_n, mut worst_s, mut sum, mut cnt) = (0.0f32, 0.0f32, 0.0f32, 0);
+        for i in 0..=64 {
+            let x = (i as f32 / 64.0 * 14.0 - 10.0).exp2();
+            for (neutral, rgb) in
+                [(true, [x; 3]), (false, [x, 0.5 * x, 0.1 * x]), (false, [0.05 * x, x, 0.3 * x]), (false, [x, x, 0.02 * x]), (false, [0.18, 0.18 * x, 0.1])]
+            {
+                let got = lut.apply(rgb);
+                let mut want = rgb;
+                exact.apply_rgb(&mut want);
+                let e = (0..3).map(|c| (got[c] - want[c].clamp(0.0, 1.0)).abs()).fold(0.0, f32::max);
+                if neutral {
+                    worst_n = worst_n.max(e)
+                } else {
+                    worst_s = worst_s.max(e)
+                }
+                sum += e;
+                cnt += 1;
+            }
+        }
+        let mean = sum / cnt as f32;
+        assert!(
+            worst_n * 255.0 < max_neutral && worst_s * 255.0 < max_saturated && mean * 255.0 < 1.0,
+            "{n}³: neutral {worst_n}, saturated {worst_s}, mean {mean}"
+        );
+    }
+}

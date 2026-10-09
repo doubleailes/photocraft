@@ -3,6 +3,8 @@
 //! * [`Ocio::load`] finds the config: a Color Settings path, else `$OCIO`, else the built-in
 //!   [`DEFAULT_CONFIG`] (ACES 2.0 CG config).
 //! * Display, view and look lists for the viewer pickers, and the config's roles.
+//! * Colour conversions between config spaces through a processor cache ([`Ocio::processor`],
+//!   [`Ocio::convert_rgba`]), replacing `photocraft_cms::transform::cached` as the phases land.
 //! * [`Ocio::bake_viewer`] bakes source space → look → display/view into a [`ViewerLut`]: a
 //!   log [`Shaper`] then a `size`³ 3D LUT, which the canvas samples on the GPU
 //!   (`Rgba16Float`) and the CPU ([`ViewerLut::apply`]) alike.
@@ -12,7 +14,9 @@
 #![forbid(unsafe_code)]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+use std::collections::HashMap;
 use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::{Arc, Mutex};
 
 /// The config used when neither Color Settings nor `$OCIO` names one.
 pub const DEFAULT_CONFIG: &str = "ocio://cg-config-latest";
@@ -64,12 +68,84 @@ impl ConfigOrigin {
     }
 }
 
+/// The roles PhotoCraft uses (`docs/ocio-migration.md`, phase 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Role {
+    /// Where document pixels live and compositing happens.
+    SceneLinear,
+    /// What colour pickers and swatches show and take.
+    ColorPicking,
+    /// Painted textures (8-bit sources by default).
+    TexturePaint,
+    /// Non-colour data (masks, channels): never converted.
+    Data,
+}
+
+impl Role {
+    pub const ALL: [Role; 4] = [Role::SceneLinear, Role::ColorPicking, Role::TexturePaint, Role::Data];
+
+    /// The role's name in a config.
+    pub fn name(self) -> &'static str {
+        match self {
+            Role::SceneLinear => ROLE_SCENE_LINEAR,
+            Role::ColorPicking => "color_picking",
+            Role::TexturePaint => "texture_paint",
+            Role::Data => "data",
+        }
+    }
+}
+
+/// Processors kept per config (the cache starts over past this).
+const MAX_PROCESSORS: usize = 64;
+
+/// A colour conversion between two spaces of a config (see [`Ocio::processor`]).
+pub struct Processor {
+    cpu: ocio::CpuProcessor,
+    identity: bool,
+}
+
+impl std::fmt::Debug for Processor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Processor").field("identity", &self.identity).finish_non_exhaustive()
+    }
+}
+
+impl Processor {
+    /// Leaves values unchanged.
+    pub fn is_identity(&self) -> bool {
+        self.identity
+    }
+
+    /// Convert packed straight-alpha RGBA `f32` pixels in place (alpha kept; a trailing partial
+    /// pixel is left alone). A panic inside ocio-rs is an error, and the pixels are then
+    /// unspecified.
+    pub fn apply_rgba(&self, px: &mut [f32]) -> Result<()> {
+        if self.identity {
+            return Ok(());
+        }
+        let n = px.len() / 4 * 4;
+        let Some(px) = px.get_mut(..n) else { return Ok(()) };
+        guard("converting pixels", || {
+            self.cpu.apply_rgba_slice(px);
+            Ok(())
+        })
+    }
+
+    /// Convert one RGB colour.
+    pub fn apply_rgb(&self, rgb: [f32; 3]) -> Result<[f32; 3]> {
+        let mut px = [rgb[0], rgb[1], rgb[2], 1.0];
+        self.apply_rgba(&mut px)?;
+        Ok([px[0], px[1], px[2]])
+    }
+}
+
 /// A loaded OCIO config.
 pub struct Ocio {
     config: ocio::Config,
     /// The path or URI it was loaded from.
     pub source: String,
     pub origin: ConfigOrigin,
+    processors: Mutex<HashMap<(String, String), Arc<Processor>>>,
 }
 
 impl std::fmt::Debug for Ocio {
@@ -80,11 +156,7 @@ impl std::fmt::Debug for Ocio {
 
 fn open(spec: &str) -> Result<ocio::Config> {
     guard("loading the config", || {
-        if spec.starts_with("ocio://") {
-            Ok(ocio::Config::create_from_builtin_config(spec)?)
-        } else {
-            Ok(ocio::Config::create_from_file(spec)?)
-        }
+        if spec.starts_with("ocio://") { Ok(ocio::Config::create_from_builtin_config(spec)?) } else { Ok(ocio::Config::create_from_file(spec)?) }
     })
 }
 
@@ -106,7 +178,7 @@ impl Ocio {
     /// Load `spec` (a file path or an `ocio://` URI).
     pub fn open(spec: &str, origin: ConfigOrigin) -> Result<Self> {
         let config = open(spec).map_err(|e| OcioError(format!("can't load `{spec}`: {}", e.0)))?;
-        Ok(Self { config, source: spec.to_string(), origin })
+        Ok(Self { config, source: spec.to_string(), origin, processors: Mutex::new(HashMap::new()) })
     }
 
     /// The config's name (may be empty).
@@ -116,7 +188,8 @@ impl Ocio {
 
     /// Active displays, in config order.
     pub fn displays(&self) -> Vec<String> {
-        guard("listing displays", || Ok((0..self.config.num_displays()).map(|i| self.config.display(i)).filter(|d| !d.is_empty()).collect())).unwrap_or_default()
+        guard("listing displays", || Ok((0..self.config.num_displays()).map(|i| self.config.display(i)).filter(|d| !d.is_empty()).collect()))
+            .unwrap_or_default()
     }
 
     pub fn default_display(&self) -> String {
@@ -125,7 +198,8 @@ impl Ocio {
 
     /// The views of `display` (empty when it isn't a display of the config).
     pub fn views(&self, display: &str) -> Vec<String> {
-        guard("listing views", || Ok((0..self.config.num_views(display)).map(|i| self.config.view(display, i)).filter(|v| !v.is_empty()).collect())).unwrap_or_default()
+        guard("listing views", || Ok((0..self.config.num_views(display)).map(|i| self.config.view(display, i)).filter(|v| !v.is_empty()).collect()))
+            .unwrap_or_default()
     }
 
     pub fn default_view(&self, display: &str) -> String {
@@ -141,6 +215,39 @@ impl Ocio {
     /// The colour space a role names (`None` when the config doesn't define it).
     pub fn role(&self, role: &str) -> Option<String> {
         guard("reading a role", || Ok(self.config.role_color_space(role).to_string())).ok().filter(|s| !s.is_empty())
+    }
+
+    /// The colour space a [`Role`] names in this config.
+    pub fn role_space(&self, role: Role) -> Option<String> {
+        self.role(role.name())
+    }
+
+    /// The conversion `src` → `dst` (colour space names, aliases or roles), cached per config.
+    /// Unknown names are errors.
+    pub fn processor(&self, src: &str, dst: &str) -> Result<Arc<Processor>> {
+        let key = (src.to_string(), dst.to_string());
+        if let Some(p) = self.processors.lock().unwrap_or_else(|e| e.into_inner()).get(&key) {
+            return Ok(p.clone());
+        }
+        for name in [src, dst] {
+            if !self.has_color_space(name) && self.role(name).is_none() {
+                return Err(OcioError(format!("no colour space or role `{name}` in the config")));
+            }
+        }
+        let cpu = guard("building a processor", || Ok(self.config.get_processor(src, dst)?.default_cpu_processor()))?;
+        let identity = guard("inspecting a processor", || Ok(cpu.is_no_op())).unwrap_or(false);
+        let p = Arc::new(Processor { cpu, identity });
+        let mut cache = self.processors.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= MAX_PROCESSORS {
+            cache.clear();
+        }
+        cache.insert(key, p.clone());
+        Ok(p)
+    }
+
+    /// Convert packed RGBA `f32` pixels from `src` to `dst` in place (see [`Ocio::processor`]).
+    pub fn convert_rgba(&self, src: &str, dst: &str, px: &mut [f32]) -> Result<()> {
+        self.processor(src, dst)?.apply_rgba(px)
     }
 
     /// Is `name` a colour space (or alias) of the config?
@@ -238,7 +345,10 @@ impl Shaper {
 }
 
 /// A baked viewer transform: [`Shaper`], then a `size`³ RGB LUT (red fastest) of display
-/// values.
+/// values. It is baked from the document's space itself, not through a matrix into a wider
+/// scene-linear space: a matrix's crosstalk interpolates badly in the log-shaped lattice
+/// (saturated colours were off by up to 0.15), so values below 0 (outside Rec.709) clamp to 0
+/// until the analytic shaders (ocio-rs #9).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewerLut {
     pub size: usize,
@@ -279,10 +389,13 @@ impl ViewerLut {
     /// The LUT as `Rgba16Float` texels (alpha 1), red fastest, for a 3D texture upload.
     pub fn to_rgba16f_bytes(&self) -> Vec<u8> {
         let one = half::f16::from_f32(1.0).to_le_bytes();
-        self.data.iter().flat_map(|p| {
-            let [r, g, b] = p.map(|v| half::f16::from_f32(v).to_le_bytes());
-            [r, g, b, one].into_iter().flatten()
-        }).collect()
+        self.data
+            .iter()
+            .flat_map(|p| {
+                let [r, g, b] = p.map(|v| half::f16::from_f32(v).to_le_bytes());
+                [r, g, b, one].into_iter().flatten()
+            })
+            .collect()
     }
 }
 

@@ -35,6 +35,15 @@ pub fn status_controls(app: &mut PhotocraftApp, ui: &mut egui::Ui) {
     if v.ocio
         && let Ok(cfg) = app.session.color.ocio()
     {
+        let looks = cfg.looks();
+        if !looks.is_empty() {
+            let mut look = v.look.clone();
+            let mut opts: Vec<(String, &str)> = vec![(String::new(), tl!("No look"))];
+            opts.extend(looks.iter().map(|n| (n.clone(), n.as_str())));
+            if widgets::dropdown(ui, "viewer-look", &mut look, &opts, 110.0) {
+                set(app, "view.ocio.look", json!({"look": if look.is_empty() { "none" } else { look.as_str() }}));
+            }
+        }
         let r = app.session.color.viewer_report();
         let display = r["display"].as_str().unwrap_or("").to_string();
         let mut view = r["view"].as_str().unwrap_or("").to_string();

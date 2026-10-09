@@ -2576,4 +2576,5 @@ cameraRaw	Blending	Fusion
 	Viewer gamma (after the view)	Gamma de la visionneuse (après la vue)
 	Viewer exposure in stops (before the view)	Exposition de la visionneuse en IL (avant la vue)
 	OCIO viewer on: click for the ICC monitor display	Visionneuse OCIO active : cliquez pour l'affichage ICC du moniteur
+	No look	Aucun look
 	Show documents through the OCIO display and view	Afficher les documents via l'affichage et la vue OCIO

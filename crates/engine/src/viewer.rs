@@ -200,6 +200,7 @@ impl ColorState {
                 r["views"] = json!(cfg.views(&display));
                 r["looks"] = json!(cfg.looks());
                 r["source"] = json!(cfg.find_space(DOC_SPACES));
+                r["roles"] = Value::Object(photocraft_ocio::Role::ALL.iter().map(|ro| (ro.name().to_string(), json!(cfg.role_space(*ro)))).collect());
             }
             Err(e) => r["config"] = json!({"error": e.to_string()}),
         }

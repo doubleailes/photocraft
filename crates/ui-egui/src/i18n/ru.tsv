@@ -2419,4 +2419,5 @@ cameraRaw	Roughness	Неровность
 	Viewer gamma (after the view)	Гамма просмотра (после вида)
 	Viewer exposure in stops (before the view)	Экспозиция просмотра в ступенях (до вида)
 	OCIO viewer on: click for the ICC monitor display	Просмотр OCIO включён: нажмите для отображения ICC монитора
+	No look	Без look
 	Show documents through the OCIO display and view	Показывать документы через дисплей и вид OCIO

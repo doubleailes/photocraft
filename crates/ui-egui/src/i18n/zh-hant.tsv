@@ -2122,4 +2122,5 @@ cameraRaw	Blending	混合
 	Viewer gamma (after the view)	檢視器伽瑪（檢視之後）
 	Viewer exposure in stops (before the view)	檢視器曝光度（級，檢視之前）
 	OCIO viewer on: click for the ICC monitor display	OCIO 檢視器已開啟：按一下切換為 ICC 顯示器顯示
+	No look	無外觀
 	Show documents through the OCIO display and view	透過 OCIO 顯示與檢視顯示文件

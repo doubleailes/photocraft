@@ -32,6 +32,7 @@ fn defaults_leave_the_icc_display_alone() {
     assert_eq!(r["display"], "sRGB - Display");
     assert_eq!(r["config"]["origin"], "default");
     assert_eq!(r["source"], "Linear Rec.709 (sRGB)");
+    assert_eq!((r["roles"]["scene_linear"].as_str(), r["roles"]["data"].as_str()), (Some("ACEScg"), Some("Raw")));
     assert!(r["displays"].as_array().unwrap().len() > 3);
 }
 

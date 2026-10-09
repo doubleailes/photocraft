@@ -2729,4 +2729,5 @@ cameraRaw	Color	색상
 	Viewer gamma (after the view)	뷰어 감마(보기 이후)
 	Viewer exposure in stops (before the view)	뷰어 노출(스톱, 보기 이전)
 	OCIO viewer on: click for the ICC monitor display	OCIO 뷰어 켜짐: 클릭하면 ICC 모니터 표시
+	No look	룩 없음
 	Show documents through the OCIO display and view	OCIO 디스플레이와 보기로 문서 표시

@@ -2145,4 +2145,5 @@ cameraRaw	Color	Barvy
 	Viewer gamma (after the view)	Gama prohlížeče (po pohledu)
 	Viewer exposure in stops (before the view)	Expozice prohlížeče v EV (před pohledem)
 	OCIO viewer on: click for the ICC monitor display	Prohlížeč OCIO zapnut: klikněte pro zobrazení ICC monitoru
+	No look	Bez looku
 	Show documents through the OCIO display and view	Zobrazovat dokumenty přes displej a pohled OCIO
